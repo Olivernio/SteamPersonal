@@ -99,6 +99,7 @@ namespace SteamPersonal.Services
         private async Task ProcessStreamAsync(HttpResponseMessage response, string destinationDir, CancellationToken cancellationToken)
         {
             long? totalBytes = response.Content.Headers.ContentLength;
+            string currentFile = string.Empty;
 
             using var networkStream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var trackedStream = new TrackedStream(networkStream, totalBytes, _pauseEvent, cancellationToken);
@@ -106,7 +107,7 @@ namespace SteamPersonal.Services
             trackedStream.OnBytesRead += (bytesRead, total, speed) =>
             {
                 double percentage = (total.HasValue && total.Value > 0) ? (double)bytesRead / total.Value * 100 : 0;
-                OnProgressUpdate(percentage, bytesRead, total ?? 0, speed, "", IsPaused ? "Pausado" : "Descargando y extrayendo...");
+                OnProgressUpdate(percentage, bytesRead, total ?? 0, speed, currentFile, IsPaused ? "Pausado" : "Descargando y extrayendo...");
             };
 
             using var reader = ReaderFactory.OpenReader(trackedStream);
@@ -115,7 +116,7 @@ namespace SteamPersonal.Services
             {
                 if (!reader.Entry.IsDirectory)
                 {
-                    OnProgressUpdate(0, 0, 0, 0, reader.Entry.Key ?? "", IsPaused ? "Pausado" : "Extrayendo archivo...");
+                    currentFile = Path.GetFileName(reader.Entry.Key ?? "");
                     
                     reader.WriteEntryToDirectory(destinationDir, new ExtractionOptions
                     {

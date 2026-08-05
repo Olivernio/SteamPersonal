@@ -120,7 +120,10 @@ namespace SteamPersonal
                         _currentGameTitle = titleProp.GetString() ?? "Descarga Activa";
                     }
 
-                    string targetFolder = Path.Combine(Directory.GetCurrentDirectory(), "JuegoExtraido");
+                    string safeTitle = string.Concat(_currentGameTitle.Split(Path.GetInvalidFileNameChars())).Trim();
+                    if (string.IsNullOrWhiteSpace(safeTitle)) safeTitle = "JuegoDescargado";
+
+                    string targetFolder = Path.Combine(Directory.GetCurrentDirectory(), "Juegos", safeTitle);
                     
                     _ = _downloader.StartDownloadAndExtractAsync(url, targetFolder);
                 }

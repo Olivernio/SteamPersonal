@@ -209,8 +209,11 @@ export function DownloadsView({ download, onCancel, onReset }: DownloadsViewProp
                       className="w-1.5 h-1.5 rounded-full"
                       style={{ backgroundColor: '#818CF8', animation: isPaused ? 'none' : 'pulse 1s ease-in-out infinite' }}
                     />
-                    <span style={{ color: '#A5B4FC', fontSize: '11px', fontWeight: 600 }}>
-                      {dl.currentFile || dl.status}
+                    <span 
+                      className="truncate max-w-xs sm:max-w-md inline-block align-middle"
+                      style={{ color: '#A5B4FC', fontSize: '11px', fontWeight: 600 }}
+                    >
+                      {dl.currentFile ? `Extrayendo: ${dl.currentFile}` : dl.status}
                     </span>
                   </div>
                 </div>
