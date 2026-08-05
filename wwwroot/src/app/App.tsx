@@ -1,18 +1,88 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useReducer } from 'react';
 import { WindowHeader } from './components/WindowHeader';
 import { Sidebar, View } from './components/Sidebar';
 import { LibraryView } from './components/LibraryView';
 import { GameDetailView } from './components/GameDetailView';
-import { DownloadsView } from './components/DownloadsView';
+import { DownloadsView, DownloadState } from './components/DownloadsView';
 import { SettingsView } from './components/SettingsView';
 import { ExploreView } from './components/ExploreView';
 import { Game, GAMES } from './data/games';
+import { onWebViewMessage, WebViewMessage } from './webview-bridge';
+
+// ── Download state reducer ─────────────────────────────────────
+
+type DownloadAction =
+  | { type: 'PROGRESS'; payload: { progress: number; downloaded: number; total: number; speed: number; file: string; status: string; gameTitle?: string } }
+  | { type: 'COMPLETED' }
+  | { type: 'FAILED'; error: string }
+  | { type: 'SET_CANCELLED'; value: boolean }
+  | { type: 'RESET' };
+
+function downloadReducer(state: DownloadState | null, action: DownloadAction): DownloadState | null {
+  switch (action.type) {
+    case 'PROGRESS':
+      return {
+        progress: action.payload.progress,
+        downloadedBytes: action.payload.downloaded,
+        totalBytes: action.payload.total,
+        speed: action.payload.speed,
+        currentFile: action.payload.file,
+        status: action.payload.status,
+        gameTitle: action.payload.gameTitle ?? state?.gameTitle ?? 'Descarga Activa',
+        completed: false,
+        cancelled: false,
+      };
+    case 'COMPLETED':
+      return state ? { ...state, completed: true, status: 'Completado', speed: 0 } : null;
+    case 'FAILED':
+      return state ? { ...state, status: `Error: ${action.error}`, speed: 0 } : null;
+    case 'SET_CANCELLED':
+      return state ? { ...state, cancelled: action.value, speed: 0 } : null;
+    case 'RESET':
+      return null;
+    default:
+      return state;
+  }
+}
+
+// ── Main App Component ─────────────────────────────────────────
 
 export default function App() {
   const [view, setView] = useState<View>('library');
   const [selectedGame, setSelectedGame] = useState<Game | null>(null);
   const [games, setGames] = useState<Game[]>(GAMES);
   const [syncing, setSyncing] = useState(false);
+  const [downloadState, dispatchDownload] = useReducer(downloadReducer, null);
+
+  // ── WebView2 message listener ──────────────────────────────
+  useEffect(() => {
+    const unsubscribe = onWebViewMessage((msg: WebViewMessage) => {
+      switch (msg.type) {
+        case 'DOWNLOAD_PROGRESS':
+          dispatchDownload({
+            type: 'PROGRESS',
+            payload: {
+              progress: msg.progress,
+              downloaded: msg.downloaded,
+              total: msg.total,
+              speed: msg.speed,
+              file: msg.file,
+              status: msg.status,
+              gameTitle: msg.gameTitle,
+            },
+          });
+          break;
+        case 'DOWNLOAD_COMPLETED':
+          dispatchDownload({ type: 'COMPLETED' });
+          break;
+        case 'DOWNLOAD_FAILED':
+          dispatchDownload({ type: 'FAILED', error: msg.error });
+          break;
+      }
+    });
+
+    return unsubscribe;
+  }, []);
 
   const handleSync = useCallback(() => {
     setSyncing(true);
@@ -38,6 +108,9 @@ export default function App() {
     );
   }, []);
 
+  // Active download count for the sidebar badge
+  const activeDownloadCount = downloadState && !downloadState.completed && !downloadState.cancelled ? 1 : 0;
+
   const renderContent = () => {
     if (selectedGame) {
       return (
@@ -60,7 +133,13 @@ export default function App() {
       case 'explore':
         return <ExploreView />;
       case 'downloads':
-        return <DownloadsView />;
+        return (
+          <DownloadsView
+            download={downloadState}
+            onCancel={() => dispatchDownload({ type: 'SET_CANCELLED', value: true })}
+            onReset={() => dispatchDownload({ type: 'RESET' })}
+          />
+        );
       case 'settings':
         return <SettingsView />;
       default:
@@ -87,7 +166,7 @@ export default function App() {
         <Sidebar
           activeView={view}
           onViewChange={handleViewChange}
-          downloadCount={1}
+          downloadCount={activeDownloadCount}
           onSync={handleSync}
           syncing={syncing}
         />

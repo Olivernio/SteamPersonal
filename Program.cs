@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.IO;
+using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -28,7 +29,7 @@ namespace SteamPersonal
                 Width = 1280,
                 Height = 800,
                 StartPosition = FormStartPosition.CenterScreen,
-                FormBorderStyle = FormFormBorderStyle.Sizable
+                FormBorderStyle = FormBorderStyle.Sizable
             };
 
             _webView = new WebView2 { Dock = DockStyle.Fill };
@@ -46,20 +47,25 @@ namespace SteamPersonal
             // Inicializar el entorno de WebView2
             await _webView.EnsureCoreWebView2Async();
 
-            // Configurar ruta local de wwwroot
-            string wwwrootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot");
-            
-            // Si el frontend fue compilado con Vite/npm build, apuntamos al index.html
-            string indexPath = Path.Combine(wwwrootPath, "index.html");
-
-            if (File.Exists(indexPath))
+            // Detectar si el servidor de desarrollo de Vite (npm run dev) está activo
+            if (await IsViteDevServerRunningAsync())
             {
-                _webView.Source = new Uri(indexPath);
+                _webView.Source = new Uri("http://localhost:5173");
             }
             else
             {
-                // Si estás corriendo Vite en modo desarrollo (npm run dev)
-                _webView.Source = new Uri("http://localhost:5173");
+                // Si no hay servidor dev, cargar bundle estático empaquetado (dist o wwwroot)
+                string wwwrootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot");
+                string distPath = Path.Combine(wwwrootPath, "dist");
+                string targetFolder = Directory.Exists(distPath) ? distPath : wwwrootPath;
+
+                _webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                    "steam.local",
+                    targetFolder,
+                    CoreWebView2HostResourceAccessKind.Allow
+                );
+
+                _webView.Source = new Uri("http://steam.local/index.html");
             }
 
             // Escuchar mensajes enviados desde JavaScript en React
@@ -74,8 +80,10 @@ namespace SteamPersonal
                     progress = e.ProgressPercentage,
                     downloaded = e.BytesDownloaded,
                     total = e.TotalBytes,
+                    speed = e.Speed,
                     file = e.CurrentFile,
-                    status = e.Status
+                    status = e.Status,
+                    gameTitle = "Descarga Activa"  // TODO: pass real game title when starting download
                 };
 
                 SendToFrontend(payload);
@@ -84,6 +92,11 @@ namespace SteamPersonal
             _downloader.DownloadCompleted += (s, dest) =>
             {
                 SendToFrontend(new { type = "DOWNLOAD_COMPLETED", destination = dest });
+            };
+
+            _downloader.DownloadFailed += (s, ex) =>
+            {
+                SendToFrontend(new { type = "DOWNLOAD_FAILED", error = ex.Message });
             };
         }
 
@@ -136,6 +149,20 @@ namespace SteamPersonal
             {
                 string json = JsonSerializer.Serialize(data);
                 _webView.CoreWebView2.PostWebMessageAsJson(json);
+            }
+        }
+
+        private static async Task<bool> IsViteDevServerRunningAsync()
+        {
+            try
+            {
+                using var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(400) };
+                using var response = await client.GetAsync("http://localhost:5173");
+                return response.IsSuccessStatusCode;
+            }
+            catch
+            {
+                return false;
             }
         }
     }

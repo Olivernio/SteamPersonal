@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -15,6 +16,7 @@ namespace SteamPersonal.Services
         public double ProgressPercentage { get; set; }
         public long BytesDownloaded { get; set; }
         public long TotalBytes { get; set; }
+        public double Speed { get; set; }  // bytes per second
         public string CurrentFile { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
     }
@@ -38,7 +40,7 @@ namespace SteamPersonal.Services
             try
             {
                 Directory.CreateDirectory(destinationDir);
-                OnProgressUpdate(0, 0, 0, "", "Conectando al servidor...");
+                OnProgressUpdate(0, 0, 0, 0, "", "Conectando al servidor...");
 
                 var cookieContainer = new CookieContainer();
                 var handler = new HttpClientHandler
@@ -86,7 +88,7 @@ namespace SteamPersonal.Services
             }
             catch (OperationCanceledException)
             {
-                OnProgressUpdate(0, 0, 0, "", "Descarga Cancelada.");
+                OnProgressUpdate(0, 0, 0, 0, "", "Descarga Cancelada.");
             }
             catch (Exception ex)
             {
@@ -101,10 +103,10 @@ namespace SteamPersonal.Services
             using var networkStream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var trackedStream = new TrackedStream(networkStream, totalBytes, _pauseEvent, cancellationToken);
 
-            trackedStream.OnBytesRead += (bytesRead, total) =>
+            trackedStream.OnBytesRead += (bytesRead, total, speed) =>
             {
                 double percentage = (total.HasValue && total.Value > 0) ? (double)bytesRead / total.Value * 100 : 0;
-                OnProgressUpdate(percentage, bytesRead, total ?? 0, "", IsPaused ? "Pausado" : "Descargando y extrayendo...");
+                OnProgressUpdate(percentage, bytesRead, total ?? 0, speed, "", IsPaused ? "Pausado" : "Descargando y extrayendo...");
             };
 
             using var reader = ReaderFactory.OpenReader(trackedStream);
@@ -113,7 +115,7 @@ namespace SteamPersonal.Services
             {
                 if (!reader.Entry.IsDirectory)
                 {
-                    OnProgressUpdate(0, 0, 0, reader.Entry.Key ?? "", IsPaused ? "Pausado" : "Extrayendo archivo...");
+                    OnProgressUpdate(0, 0, 0, 0, reader.Entry.Key ?? "", IsPaused ? "Pausado" : "Extrayendo archivo...");
                     
                     reader.WriteEntryToDirectory(destinationDir, new ExtractionOptions
                     {
@@ -130,13 +132,14 @@ namespace SteamPersonal.Services
         public void Resume() => _pauseEvent.Set();
         public void Cancel() => _cts?.Cancel();
 
-        private void OnProgressUpdate(double percentage, long downloaded, long total, string currentFile, string status)
+        private void OnProgressUpdate(double percentage, long downloaded, long total, double speed, string currentFile, string status)
         {
             ProgressChanged?.Invoke(this, new DownloadProgressEventArgs
             {
                 ProgressPercentage = percentage,
                 BytesDownloaded = downloaded,
                 TotalBytes = total,
+                Speed = speed,
                 CurrentFile = currentFile,
                 Status = status
             });
@@ -161,7 +164,17 @@ namespace SteamPersonal.Services
         private readonly CancellationToken _cancellationToken;
         private long _totalBytesRead;
 
-        public event Action<long, long?>? OnBytesRead;
+        // Speed calculation with smoothed moving average
+        private readonly Stopwatch _stopwatch = new Stopwatch();
+        private long _lastBytesRead;
+        private double _smoothedSpeed;
+        private const double SmoothingFactor = 0.3;  // α for exponential moving average
+        private const int SpeedUpdateIntervalMs = 500; // only recalc every 500ms
+
+        /// <summary>
+        /// Fired with (totalBytesRead, totalExpected, speedBytesPerSec)
+        /// </summary>
+        public event Action<long, long?, double>? OnBytesRead;
 
         public TrackedStream(Stream baseStream, long? totalBytes, ManualResetEventSlim pauseEvent, CancellationToken cancellationToken)
         {
@@ -169,6 +182,7 @@ namespace SteamPersonal.Services
             _totalBytes = totalBytes;
             _pauseEvent = pauseEvent;
             _cancellationToken = cancellationToken;
+            _stopwatch.Start();
         }
 
         public override int Read(byte[] buffer, int offset, int count)
@@ -179,7 +193,23 @@ namespace SteamPersonal.Services
             int bytesRead = _baseStream.Read(buffer, offset, count);
             _totalBytesRead += bytesRead;
 
-            OnBytesRead?.Invoke(_totalBytesRead, _totalBytes);
+            // Calculate speed at intervals to avoid excessive noise
+            if (_stopwatch.ElapsedMilliseconds >= SpeedUpdateIntervalMs)
+            {
+                long deltaBytes = _totalBytesRead - _lastBytesRead;
+                double deltaSeconds = _stopwatch.Elapsed.TotalSeconds;
+                double instantSpeed = (deltaSeconds > 0) ? deltaBytes / deltaSeconds : 0;
+
+                // Exponential moving average for smooth display
+                _smoothedSpeed = (_smoothedSpeed == 0)
+                    ? instantSpeed
+                    : (SmoothingFactor * instantSpeed) + ((1 - SmoothingFactor) * _smoothedSpeed);
+
+                _lastBytesRead = _totalBytesRead;
+                _stopwatch.Restart();
+
+                OnBytesRead?.Invoke(_totalBytesRead, _totalBytes, _smoothedSpeed);
+            }
 
             return bytesRead;
         }
