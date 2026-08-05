@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -8,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using SharpCompress.Common;
 using SharpCompress.Readers;
+using SteamPersonal.Services.Models;
 
 namespace SteamPersonal.Services
 {
@@ -19,20 +21,22 @@ namespace SteamPersonal.Services
         public double Speed { get; set; }
         public string CurrentFile { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
-        public string Phase { get; set; } = "downloading";
+        public int FilesCompleted { get; set; }
     }
 
     public class GameDownloaderService
     {
         private CancellationTokenSource? _cts;
+        private ManualResetEventSlim _pauseEvent = new ManualResetEventSlim(true);
         private Task? _activeTask;
-        private bool _isPaused;
 
-        // State preserved for pause/resume
+        // State preserved for display during pause
         private string _activeUrl = "";
         private string _activeDestDir = "";
+        private string _activeGameTitle = "";
         private long _lastDownloadedBytes;
         private long _lastTotalBytes;
+        private int _lastFilesCompleted;
 
         private const int MaxRetries = 5;
         private const int RetryDelayMs = 3000;
@@ -42,123 +46,69 @@ namespace SteamPersonal.Services
         public event EventHandler<string>? DownloadCompleted;
         public event EventHandler<Exception>? DownloadFailed;
 
-        public bool IsPaused => _isPaused;
+        public bool IsPaused => !_pauseEvent.IsSet;
 
         // ── Public API ──────────────────────────────────────────
 
-        public async Task StartDownloadAndExtractAsync(string url, string destinationDir)
+        public async Task StartStreamExtractAsync(string url, string destinationDir, string gameTitle)
         {
             // Cancel and wait for any previous task
             if (_activeTask != null && !_activeTask.IsCompleted)
             {
                 _cts?.Cancel();
+                _pauseEvent.Set(); // Unblock any paused thread
                 try { await _activeTask; } catch { /* swallow */ }
             }
 
             _activeUrl = url;
             _activeDestDir = destinationDir;
-            _isPaused = false;
+            _activeGameTitle = gameTitle;
             _lastDownloadedBytes = 0;
             _lastTotalBytes = 0;
+            _lastFilesCompleted = 0;
             _cts = new CancellationTokenSource();
+            _pauseEvent.Set();
 
-            _activeTask = ExecuteAsync(url, destinationDir, _cts.Token);
+            _activeTask = Task.Run(() => ExecuteStreamExtractAsync(url, destinationDir, gameTitle, _cts.Token));
             await _activeTask;
         }
 
         public void Pause()
         {
-            _isPaused = true;
-            _cts?.Cancel(); // Stops the HTTP connection cleanly
-            // .part file stays on disk for resume
+            _pauseEvent.Reset(); // Blocks TrackedStream.Read() on next call
+            OnProgressUpdate(
+                _lastTotalBytes > 0 ? (double)_lastDownloadedBytes / _lastTotalBytes * 100 : 0,
+                _lastDownloadedBytes, _lastTotalBytes, 0, "", "Pausado", _lastFilesCompleted);
         }
 
         public void Resume()
         {
-            if (_isPaused && !string.IsNullOrEmpty(_activeUrl))
-            {
-                _isPaused = false;
-                // Fire-and-forget: starts new download from .part using Range
-                _ = StartResumeAsync();
-            }
+            _pauseEvent.Set(); // Unblocks TrackedStream.Read()
         }
 
         public void Cancel()
         {
-            _isPaused = false;
             _cts?.Cancel();
+            _pauseEvent.Set(); // Unblock any paused thread so it can observe cancellation
 
-            // Delete .part file so next download starts fresh
-            string partFile = _activeDestDir + ".part";
+            // Clean up: delete destination directory and manifest
+            string destDir = _activeDestDir;
             Task.Run(async () =>
             {
-                await Task.Delay(500); // Small delay to let file handles close
-                try { if (File.Exists(partFile)) File.Delete(partFile); } catch { }
+                await Task.Delay(500); // Let file handles close
+                try
+                {
+                    ManifestHelper.Delete(destDir);
+                    // Optionally delete extracted files too
+                    // if (Directory.Exists(destDir)) Directory.Delete(destDir, true);
+                }
+                catch { }
             });
         }
 
-        // ── Core execution ──────────────────────────────────────
+        // ── Core: Streaming Extraction with Checkpoints ─────────
 
-        private async Task StartResumeAsync()
-        {
-            // Wait for previous task to finish (it was cancelled by Pause)
-            if (_activeTask != null && !_activeTask.IsCompleted)
-            {
-                try { await _activeTask; } catch { /* swallow */ }
-            }
-
-            _cts = new CancellationTokenSource();
-            _activeTask = ExecuteAsync(_activeUrl, _activeDestDir, _cts.Token);
-            await _activeTask;
-        }
-
-        private async Task ExecuteAsync(string url, string destinationDir, CancellationToken ct)
-        {
-            try
-            {
-                Directory.CreateDirectory(destinationDir);
-                string partFilePath = destinationDir + ".part";
-
-                // ── Phase 1: Download to .part file ──────────────
-                OnProgressUpdate(0, 0, 0, 0, "", "Conectando al servidor...", "downloading");
-                await DownloadToFileAsync(url, partFilePath, ct);
-
-                // Rename .part → .archive
-                string archivePath = Path.ChangeExtension(partFilePath, ".archive");
-                if (File.Exists(archivePath)) File.Delete(archivePath);
-                File.Move(partFilePath, archivePath);
-
-                // ── Phase 2: Extract archive ─────────────────────
-                OnProgressUpdate(0, 0, 0, 0, "", "Iniciando extracción...", "extracting");
-                await ExtractFileAsync(archivePath, destinationDir, ct);
-
-                // Cleanup archive
-                try { File.Delete(archivePath); } catch { }
-
-                DownloadCompleted?.Invoke(this, destinationDir);
-            }
-            catch (OperationCanceledException)
-            {
-                if (_isPaused)
-                {
-                    double pct = _lastTotalBytes > 0
-                        ? (double)_lastDownloadedBytes / _lastTotalBytes * 100 : 0;
-                    OnProgressUpdate(pct, _lastDownloadedBytes, _lastTotalBytes, 0, "", "Pausado", "downloading");
-                }
-                else
-                {
-                    OnProgressUpdate(0, 0, 0, 0, "", "Descarga Cancelada.", "downloading");
-                }
-            }
-            catch (Exception ex)
-            {
-                DownloadFailed?.Invoke(this, ex);
-            }
-        }
-
-        // ── Phase 1: Download with Range resume + retry ─────────
-
-        private async Task DownloadToFileAsync(string url, string partFilePath, CancellationToken ct)
+        private async Task ExecuteStreamExtractAsync(string url, string destinationDir, string gameTitle, CancellationToken ct)
         {
             int retryCount = 0;
 
@@ -166,9 +116,33 @@ namespace SteamPersonal.Services
             {
                 try
                 {
-                    long existingBytes = File.Exists(partFilePath) ? new FileInfo(partFilePath).Length : 0;
+                    Directory.CreateDirectory(destinationDir);
 
-                    // Create HttpClient with cookies (needed for Google Drive)
+                    // 1. Clean orphaned .tmp files from any previous interrupted run
+                    ManifestHelper.CleanOrphanedTmpFiles(destinationDir);
+
+                    // 2. Load manifest to know what's already extracted
+                    var manifest = ManifestHelper.Load(destinationDir) ?? new DownloadManifest
+                    {
+                        GameTitle = gameTitle,
+                        SourceUrl = url,
+                        DestinationDir = destinationDir,
+                        CompletedFiles = new List<CompletedFileEntry>()
+                    };
+                    var completedSet = ManifestHelper.BuildCompletedSet(manifest);
+
+                    bool isResuming = completedSet.Count > 0;
+                    if (isResuming)
+                    {
+                        OnProgressUpdate(0, 0, 0, 0, "",
+                            $"Reanudando... {completedSet.Count} archivos ya extraídos", completedSet.Count);
+                    }
+                    else
+                    {
+                        OnProgressUpdate(0, 0, 0, 0, "", "Conectando al servidor...", 0);
+                    }
+
+                    // 3. Open HTTP stream
                     var cookieContainer = new CookieContainer();
                     var handler = new HttpClientHandler
                     {
@@ -181,156 +155,146 @@ namespace SteamPersonal.Services
                     client.Timeout = TimeSpan.FromHours(4);
                     client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
-                    // Resolve Google Drive URL using same client (preserves cookies)
+                    // Resolve Google Drive URL (same client preserves cookies)
                     string downloadUrl = await ResolveUrlWithClientAsync(client, url, ct);
 
-                    // Build request with Range header if resuming
-                    var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
+                    using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+                    response.EnsureSuccessStatusCode();
 
-                    if (existingBytes > 0)
-                    {
-                        request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(existingBytes, null);
-                        OnProgressUpdate(0, existingBytes, 0, 0, "", "Reanudando descarga...", "downloading");
-                    }
+                    long? totalBytes = response.Content.Headers.ContentLength;
 
-                    using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-
-                    bool isPartial = response.StatusCode == HttpStatusCode.PartialContent;
-                    bool isFull = response.StatusCode == HttpStatusCode.OK;
-
-                    if (!isPartial && !isFull)
-                    {
-                        response.EnsureSuccessStatusCode();
-                    }
-
-                    long contentLength = response.Content.Headers.ContentLength ?? 0;
-                    long totalBytes;
-                    FileMode fileMode;
-
-                    if (isPartial && existingBytes > 0)
-                    {
-                        totalBytes = existingBytes + contentLength;
-                        fileMode = FileMode.Append;
-                    }
-                    else
-                    {
-                        totalBytes = contentLength;
-                        existingBytes = 0;
-                        fileMode = FileMode.Create;
-                    }
-
+                    // 4. Wrap in TrackedStream for progress + pause support
                     using var networkStream = await response.Content.ReadAsStreamAsync(ct);
-                    using var fileStream = new FileStream(partFilePath, fileMode, FileAccess.Write, FileShare.None, BufferSize);
+                    using var trackedStream = new TrackedStream(networkStream, totalBytes, _pauseEvent, ct);
 
-                    var buffer = new byte[BufferSize];
-                    long downloadedBytes = existingBytes;
-                    var stopwatch = Stopwatch.StartNew();
-                    long lastSpeedBytes = downloadedBytes;
-                    double smoothedSpeed = 0;
-                    const double alpha = 0.3;
+                    trackedStream.OnBytesRead += (bytesRead, total, speed) =>
+                    {
+                        _lastDownloadedBytes = bytesRead;
+                        _lastTotalBytes = total ?? 0;
 
-                    int bytesRead;
-                    while ((bytesRead = await networkStream.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
+                        double percentage = (total.HasValue && total.Value > 0)
+                            ? (double)bytesRead / total.Value * 100 : 0;
+
+                        OnProgressUpdate(percentage, bytesRead, total ?? 0, speed, "",
+                            IsPaused ? "Pausado" : "Descargando y extrayendo...", _lastFilesCompleted);
+                    };
+
+                    // 5. Stream directly into SharpCompress
+                    using var reader = ReaderFactory.OpenReader(trackedStream);
+                    int skippedCount = 0;
+
+                    while (reader.MoveToNextEntry())
                     {
                         ct.ThrowIfCancellationRequested();
 
-                        await fileStream.WriteAsync(buffer, 0, bytesRead, ct);
-                        downloadedBytes += bytesRead;
+                        if (reader.Entry.IsDirectory)
+                            continue;
 
-                        // Track for pause/resume display
-                        _lastDownloadedBytes = downloadedBytes;
-                        _lastTotalBytes = totalBytes;
+                        string entryKey = reader.Entry.Key ?? "";
+                        string normalizedKey = ManifestHelper.NormalizePath(entryKey);
 
-                        // Update speed every 500ms
-                        if (stopwatch.ElapsedMilliseconds >= 500)
+                        // Check if already extracted (from manifest)
+                        if (completedSet.Contains(normalizedKey))
                         {
-                            long deltaBytes = downloadedBytes - lastSpeedBytes;
-                            double deltaSecs = stopwatch.Elapsed.TotalSeconds;
-                            double instantSpeed = deltaSecs > 0 ? deltaBytes / deltaSecs : 0;
+                            // Skip: already extracted in a previous session.
+                            // IReader automatically advances past entries that aren't read.
+                            skippedCount++;
 
-                            smoothedSpeed = smoothedSpeed == 0
-                                ? instantSpeed
-                                : (alpha * instantSpeed) + ((1 - alpha) * smoothedSpeed);
-
-                            lastSpeedBytes = downloadedBytes;
-                            stopwatch.Restart();
-
-                            double percentage = totalBytes > 0 ? (double)downloadedBytes / totalBytes * 100 : 0;
-                            OnProgressUpdate(percentage, downloadedBytes, totalBytes, smoothedSpeed, "",
-                                "Descargando...", "downloading");
+                            if (skippedCount % 50 == 0)
+                            {
+                                OnProgressUpdate(0, _lastDownloadedBytes, _lastTotalBytes, 0, "",
+                                    $"Omitiendo archivos ya extraídos ({skippedCount}/{completedSet.Count})...",
+                                    completedSet.Count);
+                            }
+                            continue;
                         }
+
+                        string fileName = Path.GetFileName(entryKey);
+
+                        // 6. Extract to .tmp first (anti-corruption)
+                        string relativePath = entryKey.Replace('/', Path.DirectorySeparatorChar);
+                        string finalPath = Path.Combine(destinationDir, relativePath);
+                        string tmpPath = finalPath + ".tmp";
+
+                        // Ensure target directory exists
+                        string? targetDir = Path.GetDirectoryName(finalPath);
+                        if (targetDir != null) Directory.CreateDirectory(targetDir);
+
+                        // Write entry to .tmp file
+                        using (var entryStream = reader.OpenEntryStream())
+                        using (var tmpFile = new FileStream(tmpPath, FileMode.Create, FileAccess.Write, FileShare.None, BufferSize))
+                        {
+                            var buffer = new byte[BufferSize];
+                            int bytesRead;
+                            while ((bytesRead = entryStream.Read(buffer, 0, buffer.Length)) > 0)
+                            {
+                                ct.ThrowIfCancellationRequested();
+                                _pauseEvent.Wait(ct);
+                                tmpFile.Write(buffer, 0, bytesRead);
+                            }
+                        }
+
+                        // 7. Rename .tmp → final (atomic commit)
+                        if (File.Exists(finalPath)) File.Delete(finalPath);
+                        File.Move(tmpPath, finalPath);
+
+                        // 8. Register in manifest
+                        var fileInfo = new FileInfo(finalPath);
+                        manifest.CompletedFiles.Add(new CompletedFileEntry
+                        {
+                            RelativePath = normalizedKey,
+                            SizeBytes = fileInfo.Length
+                        });
+                        completedSet.Add(normalizedKey);
+                        _lastFilesCompleted = manifest.CompletedFiles.Count;
+
+                        // Save manifest periodically (every file)
+                        ManifestHelper.Save(manifest);
+
+                        // Update UI with current file name
+                        OnProgressUpdate(
+                            _lastTotalBytes > 0 ? (double)_lastDownloadedBytes / _lastTotalBytes * 100 : 0,
+                            _lastDownloadedBytes, _lastTotalBytes, 0, fileName,
+                            "Descargando y extrayendo...", _lastFilesCompleted);
                     }
 
-                    // Final 100% update
-                    OnProgressUpdate(100, downloadedBytes, totalBytes, smoothedSpeed, "",
-                        "Descarga completada", "downloading");
+                    // 9. Done! Clean up manifest
+                    ManifestHelper.Delete(destinationDir);
+                    DownloadCompleted?.Invoke(this, destinationDir);
+                    return; // Success — exit retry loop
 
-                    return; // Success
                 }
                 catch (OperationCanceledException)
                 {
-                    throw; // Don't retry on user-initiated cancel/pause
+                    // User-initiated cancel or pause → don't retry
+                    OnProgressUpdate(0, 0, 0, 0, "", "Descarga Cancelada.", 0);
+                    return;
                 }
                 catch (Exception ex) when (retryCount < MaxRetries)
                 {
                     retryCount++;
                     OnProgressUpdate(0, _lastDownloadedBytes, _lastTotalBytes, 0, "",
-                        $"Error de red. Reintento {retryCount}/{MaxRetries} en 3s...", "downloading");
+                        $"Error de red. Reintento {retryCount}/{MaxRetries} en 3s...", _lastFilesCompleted);
 
                     Console.WriteLine($"[Retry {retryCount}/{MaxRetries}] {ex.Message}");
                     await Task.Delay(RetryDelayMs, ct);
-                    // Next loop iteration will re-read .part size and use Range
+                    // Next iteration will load manifest and SkipEntry() past completed files
+                }
+                catch (Exception ex)
+                {
+                    DownloadFailed?.Invoke(this, ex);
+                    return;
                 }
             }
         }
 
-        // ── Phase 2: Extract from completed archive ─────────────
-
-        private async Task ExtractFileAsync(string archivePath, string destinationDir, CancellationToken ct)
-        {
-            await Task.Run(() =>
-            {
-                using var fileStream = File.OpenRead(archivePath);
-                long totalArchiveBytes = fileStream.Length;
-                string currentFile = string.Empty;
-
-                var trackedStream = new TrackedStream(fileStream, totalArchiveBytes, ct);
-
-                trackedStream.OnBytesRead += (read, total, speed) =>
-                {
-                    double percentage = total.HasValue && total.Value > 0
-                        ? (double)read / total.Value * 100 : 0;
-                    OnProgressUpdate(percentage, read, total ?? 0, speed, currentFile,
-                        "Extrayendo...", "extracting");
-                };
-
-                using var reader = ReaderFactory.OpenReader(trackedStream);
-
-                while (reader.MoveToNextEntry())
-                {
-                    ct.ThrowIfCancellationRequested();
-
-                    if (!reader.Entry.IsDirectory)
-                    {
-                        currentFile = Path.GetFileName(reader.Entry.Key ?? "");
-
-                        reader.WriteEntryToDirectory(destinationDir, new ExtractionOptions
-                        {
-                            ExtractFullPath = true,
-                            Overwrite = true
-                        });
-                    }
-                }
-            }, ct);
-        }
-
-        // ── Google Drive URL resolution (same HttpClient for cookies) ──
+        // ── Google Drive URL resolution ─────────────────────────
 
         private async Task<string> ResolveUrlWithClientAsync(HttpClient client, string url, CancellationToken ct)
         {
             string fileId = ExtractGoogleDriveId(url);
             if (string.IsNullOrEmpty(fileId))
-                return url; // Direct URL
+                return url;
 
             string downloadUrl = $"https://drive.usercontent.google.com/download?id={fileId}&export=download&confirm=t";
 
@@ -359,7 +323,8 @@ namespace SteamPersonal.Services
 
         // ── Helpers ─────────────────────────────────────────────
 
-        private void OnProgressUpdate(double percentage, long downloaded, long total, double speed, string currentFile, string status, string phase)
+        private void OnProgressUpdate(double percentage, long downloaded, long total, double speed,
+            string currentFile, string status, int filesCompleted)
         {
             ProgressChanged?.Invoke(this, new DownloadProgressEventArgs
             {
@@ -369,7 +334,7 @@ namespace SteamPersonal.Services
                 Speed = speed,
                 CurrentFile = currentFile,
                 Status = status,
-                Phase = phase
+                FilesCompleted = filesCompleted
             });
         }
 
@@ -384,12 +349,13 @@ namespace SteamPersonal.Services
         }
     }
 
-    // ── TrackedStream (extraction progress only, no pause) ───────
+    // ── TrackedStream: progress + speed + pause support ──────────
 
     public class TrackedStream : Stream
     {
         private readonly Stream _baseStream;
         private readonly long? _totalBytes;
+        private readonly ManualResetEventSlim _pauseEvent;
         private readonly CancellationToken _cancellationToken;
         private long _totalBytesRead;
 
@@ -399,12 +365,16 @@ namespace SteamPersonal.Services
         private const double SmoothingFactor = 0.3;
         private const int SpeedUpdateIntervalMs = 500;
 
+        /// <summary>
+        /// Fired with (totalBytesRead, totalExpected, speedBytesPerSec)
+        /// </summary>
         public event Action<long, long?, double>? OnBytesRead;
 
-        public TrackedStream(Stream baseStream, long? totalBytes, CancellationToken cancellationToken)
+        public TrackedStream(Stream baseStream, long? totalBytes, ManualResetEventSlim pauseEvent, CancellationToken cancellationToken)
         {
             _baseStream = baseStream;
             _totalBytes = totalBytes;
+            _pauseEvent = pauseEvent;
             _cancellationToken = cancellationToken;
             _stopwatch.Start();
         }
@@ -412,6 +382,7 @@ namespace SteamPersonal.Services
         public override int Read(byte[] buffer, int offset, int count)
         {
             _cancellationToken.ThrowIfCancellationRequested();
+            _pauseEvent.Wait(_cancellationToken); // Blocks here when paused
 
             int bytesRead = _baseStream.Read(buffer, offset, count);
             _totalBytesRead += bytesRead;

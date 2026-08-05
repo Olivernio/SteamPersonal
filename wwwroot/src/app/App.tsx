@@ -12,7 +12,7 @@ import { onWebViewMessage, WebViewMessage, startDownload, launchGame } from './w
 // ── Download state reducer ─────────────────────────────────────
 
 type DownloadAction =
-  | { type: 'PROGRESS'; payload: { progress: number; downloaded: number; total: number; speed: number; file: string; status: string; phase: 'downloading' | 'extracting'; gameTitle?: string } }
+  | { type: 'PROGRESS'; payload: { progress: number; downloaded: number; total: number; speed: number; file: string; status: string; filesCompleted: number; gameTitle?: string } }
   | { type: 'COMPLETED' }
   | { type: 'FAILED'; error: string }
   | { type: 'SET_CANCELLED'; value: boolean }
@@ -28,7 +28,7 @@ function downloadReducer(state: DownloadState | null, action: DownloadAction): D
         speed: action.payload.speed,
         currentFile: action.payload.file,
         status: action.payload.status,
-        phase: action.payload.phase,
+        filesCompleted: action.payload.filesCompleted,
         gameTitle: action.payload.gameTitle ?? state?.gameTitle ?? 'Descarga Activa',
         completed: false,
         cancelled: false,
@@ -74,7 +74,7 @@ export default function App() {
               speed: msg.speed,
               file: msg.file,
               status: msg.status,
-              phase: msg.phase ?? 'downloading',
+              filesCompleted: msg.filesCompleted ?? 0,
               gameTitle: msg.gameTitle,
             },
           });
@@ -150,7 +150,7 @@ export default function App() {
         speed: 0,
         file: '',
         status: 'Conectando al servidor...',
-        phase: 'downloading',
+        filesCompleted: 0,
         gameTitle: game.title,
       },
     });

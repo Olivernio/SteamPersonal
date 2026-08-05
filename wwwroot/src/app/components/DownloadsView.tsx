@@ -10,7 +10,7 @@ export interface DownloadState {
   totalBytes: number;       // raw bytes
   currentFile: string;
   status: string;
-  phase: 'downloading' | 'extracting';
+  filesCompleted: number;   // number of files fully extracted
   gameTitle: string;
   completed: boolean;
   cancelled: boolean;
@@ -116,7 +116,6 @@ export function DownloadsView({ download, onCancel, onReset, onLaunchGame }: Dow
 
   // ── Active download ──────────────────────────────────────
   const isPaused = dl.status === 'Pausado';
-  const isExtracting = dl.phase === 'extracting';
 
   // Calculate ETA from speed
   const etaText = (() => {
@@ -129,9 +128,9 @@ export function DownloadsView({ download, onCancel, onReset, onLaunchGame }: Dow
     return `${(remainingSeconds / 3600).toFixed(1)} hrs`;
   })();
 
-  const phaseLabel = isPaused ? 'PAUSADO' : isExtracting ? 'EXTRAYENDO' : 'DESCARGANDO';
-  const phaseColor = isPaused ? '#EAB308' : isExtracting ? '#A78BFA' : '#60A5FA';
-  const dotColor = isPaused ? '#EAB308' : isExtracting ? '#8B5CF6' : '#3B82F6';
+  const statusLabel = isPaused ? 'PAUSADO' : 'DESCARGANDO';
+  const statusColor = isPaused ? '#EAB308' : '#60A5FA';
+  const dotColor = isPaused ? '#EAB308' : '#3B82F6';
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -146,7 +145,7 @@ export function DownloadsView({ download, onCancel, onReset, onLaunchGame }: Dow
           {/* Card header */}
           <div
             className="px-5 py-3 flex items-center justify-between"
-            style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', backgroundColor: isExtracting ? 'rgba(139,92,246,0.06)' : 'rgba(59,130,246,0.06)' }}
+            style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', backgroundColor: 'rgba(59,130,246,0.06)' }}
           >
             <div className="flex items-center gap-2">
               <div
@@ -157,20 +156,20 @@ export function DownloadsView({ download, onCancel, onReset, onLaunchGame }: Dow
                   animation: isPaused ? 'none' : 'pulse 1.5s ease-in-out infinite',
                 }}
               />
-              <span style={{ color: phaseColor, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em' }}>
-                {phaseLabel}
+              <span style={{ color: statusColor, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em' }}>
+                {statusLabel}
               </span>
-              {!isPaused && (
+              {dl.filesCompleted > 0 && (
                 <span
                   className="px-2 py-0.5 rounded-md"
                   style={{
-                    backgroundColor: isExtracting ? 'rgba(139,92,246,0.15)' : 'rgba(59,130,246,0.15)',
-                    color: isExtracting ? '#C4B5FD' : '#93C5FD',
+                    backgroundColor: 'rgba(34,197,94,0.15)',
+                    color: '#86EFAC',
                     fontSize: '9px',
                     fontWeight: 600,
                   }}
                 >
-                  {isExtracting ? 'FASE 2/2' : 'FASE 1/2'}
+                  {dl.filesCompleted} archivos extraídos
                 </span>
               )}
             </div>

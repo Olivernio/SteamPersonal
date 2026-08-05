@@ -14,6 +14,7 @@ namespace SteamPersonal
     {
         private static WebView2? _webView;
         private static GameDownloaderService _downloader = new GameDownloaderService();
+        private static GameRecipeService _recipeService = new GameRecipeService(_downloader);
         private static GameLauncherService _launcher = new GameLauncherService();
         private static string _currentGameTitle = "Descarga Activa";
 
@@ -85,7 +86,7 @@ namespace SteamPersonal
                     speed = e.Speed,
                     file = e.CurrentFile,
                     status = e.Status,
-                    phase = e.Phase,
+                    filesCompleted = e.FilesCompleted,
                     gameTitle = _currentGameTitle
                 };
 
@@ -138,12 +139,12 @@ namespace SteamPersonal
                         _currentGameTitle = titleProp.GetString() ?? "Descarga Activa";
                     }
 
-                    string safeTitle = string.Concat(_currentGameTitle.Split(Path.GetInvalidFileNameChars())).Trim();
-                    if (string.IsNullOrWhiteSpace(safeTitle)) safeTitle = "JuegoDescargado";
+                    var recipe = new SteamPersonal.Services.Models.InstallationRecipe
+                    {
+                        Title = _currentGameTitle
+                    };
 
-                    string targetFolder = Path.Combine(Directory.GetCurrentDirectory(), "Juegos", safeTitle);
-                    
-                    _ = _downloader.StartDownloadAndExtractAsync(url, targetFolder);
+                    _ = _recipeService.ExecuteRecipeAsync(recipe, url);
                 }
                 else if (action == "LAUNCH_GAME")
                 {
