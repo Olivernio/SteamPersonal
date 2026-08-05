@@ -14,6 +14,7 @@ namespace SteamPersonal
     {
         private static WebView2? _webView;
         private static GameDownloaderService _downloader = new GameDownloaderService();
+        private static GameLauncherService _launcher = new GameLauncherService();
         private static string _currentGameTitle = "Descarga Activa";
 
         [STAThread]
@@ -99,6 +100,22 @@ namespace SteamPersonal
             {
                 SendToFrontend(new { type = "DOWNLOAD_FAILED", error = ex.Message });
             };
+
+            // Escuchar eventos del lanzador de juegos
+            _launcher.GameStarted += (s, gameTitle) =>
+            {
+                SendToFrontend(new { type = "GAME_STARTED", gameTitle });
+            };
+
+            _launcher.GameExited += (s, e) =>
+            {
+                SendToFrontend(new { type = "GAME_EXITED", gameTitle = e.GameTitle, sessionMinutes = e.SessionMinutes });
+            };
+
+            _launcher.LaunchFailed += (s, err) =>
+            {
+                SendToFrontend(new { type = "LAUNCH_FAILED", error = err });
+            };
         }
 
         // Manejador de comandos desde JavaScript
@@ -126,6 +143,14 @@ namespace SteamPersonal
                     string targetFolder = Path.Combine(Directory.GetCurrentDirectory(), "Juegos", safeTitle);
                     
                     _ = _downloader.StartDownloadAndExtractAsync(url, targetFolder);
+                }
+                else if (action == "LAUNCH_GAME")
+                {
+                    string gameTitle = root.GetProperty("gameTitle").GetString() ?? "";
+                    string safeTitle = string.Concat(gameTitle.Split(Path.GetInvalidFileNameChars())).Trim();
+                    string gameFolder = Path.Combine(Directory.GetCurrentDirectory(), "Juegos", safeTitle);
+
+                    _launcher.LaunchGame(gameTitle, gameFolder);
                 }
                 else if (action == "PAUSE_DOWNLOAD")
                 {
@@ -165,7 +190,7 @@ namespace SteamPersonal
         {
             try
             {
-                using var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(400) };
+                using var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(1500) };
                 using var response = await client.GetAsync("http://localhost:5173");
                 return response.IsSuccessStatusCode;
             }

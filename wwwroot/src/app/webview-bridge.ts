@@ -26,10 +26,29 @@ export interface DownloadFailedMessage {
   error: string;
 }
 
+export interface GameStartedMessage {
+  type: 'GAME_STARTED';
+  gameTitle: string;
+}
+
+export interface GameExitedMessage {
+  type: 'GAME_EXITED';
+  gameTitle: string;
+  sessionMinutes: number;
+}
+
+export interface LaunchFailedMessage {
+  type: 'LAUNCH_FAILED';
+  error: string;
+}
+
 export type WebViewMessage =
   | DownloadProgressMessage
   | DownloadCompletedMessage
-  | DownloadFailedMessage;
+  | DownloadFailedMessage
+  | GameStartedMessage
+  | GameExitedMessage
+  | LaunchFailedMessage;
 
 // ── Send commands to C# backend ──────────────────────────────
 
@@ -44,6 +63,7 @@ export function sendCommand(action: string, payload?: Record<string, unknown>): 
 
 // Convenience functions matching the C# OnWebMessageReceived handler
 export const startDownload  = (url: string, gameTitle?: string) => sendCommand('START_DOWNLOAD', { url, gameTitle });
+export const launchGame     = (gameTitle: string) => sendCommand('LAUNCH_GAME', { gameTitle });
 export const pauseDownload  = () => sendCommand('PAUSE_DOWNLOAD');
 export const resumeDownload = () => sendCommand('RESUME_DOWNLOAD');
 export const cancelDownload = () => sendCommand('CANCEL_DOWNLOAD');

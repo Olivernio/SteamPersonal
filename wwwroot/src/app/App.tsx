@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useReducer } from 'react';
+import { useState, useCallback, useEffect, useReducer, useRef } from 'react';
 import { WindowHeader } from './components/WindowHeader';
 import { Sidebar, View } from './components/Sidebar';
 import { LibraryView } from './components/LibraryView';
@@ -7,7 +7,7 @@ import { DownloadsView, DownloadState } from './components/DownloadsView';
 import { SettingsView } from './components/SettingsView';
 import { ExploreView } from './components/ExploreView';
 import { Game, GAMES } from './data/games';
-import { onWebViewMessage, WebViewMessage, startDownload } from './webview-bridge';
+import { onWebViewMessage, WebViewMessage, startDownload, launchGame } from './webview-bridge';
 
 // ── Download state reducer ─────────────────────────────────────
 
@@ -54,6 +54,11 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const [downloadState, dispatchDownload] = useReducer(downloadReducer, null);
 
+  const downloadStateRef = useRef(downloadState);
+  useEffect(() => {
+    downloadStateRef.current = downloadState;
+  }, [downloadState]);
+
   // ── WebView2 message listener ──────────────────────────────
   useEffect(() => {
     const unsubscribe = onWebViewMessage((msg: WebViewMessage) => {
@@ -74,9 +79,28 @@ export default function App() {
           break;
         case 'DOWNLOAD_COMPLETED':
           dispatchDownload({ type: 'COMPLETED' });
+          const currentTitle = downloadStateRef.current?.gameTitle;
+          if (currentTitle) {
+            setGames((prev) =>
+              prev.map((g) => (g.title === currentTitle ? { ...g, status: 'updated' } : g))
+            );
+          }
           break;
         case 'DOWNLOAD_FAILED':
           dispatchDownload({ type: 'FAILED', error: msg.error });
+          break;
+        case 'GAME_EXITED':
+          if (msg.sessionMinutes > 0) {
+            const addedHours = msg.sessionMinutes / 60;
+            setGames((prev) =>
+              prev.map((g) =>
+                g.title === msg.gameTitle ? { ...g, hoursPlayed: g.hoursPlayed + addedHours } : g
+              )
+            );
+          }
+          break;
+        case 'LAUNCH_FAILED':
+          alert(`No se pudo iniciar el juego: ${msg.error}`);
           break;
       }
     });
@@ -133,6 +157,10 @@ export default function App() {
     setSelectedGame(null);
   }, []);
 
+  const handleLaunchGame = useCallback((gameTitle: string) => {
+    launchGame(gameTitle);
+  }, []);
+
   // Active download count for the sidebar badge
   const activeDownloadCount = downloadState && !downloadState.completed && !downloadState.cancelled ? 1 : 0;
 
@@ -144,6 +172,7 @@ export default function App() {
           onBack={handleBack}
           onRequestUpdate={handleRequestUpdate}
           onStartDownload={handleStartDownload}
+          onLaunchGame={handleLaunchGame}
         />
       );
     }
@@ -155,6 +184,7 @@ export default function App() {
             onGameSelect={handleGameSelect}
             onRequestUpdate={handleRequestUpdate}
             onStartDownload={handleStartDownload}
+            onLaunchGame={handleLaunchGame}
           />
         );
       case 'explore':
@@ -165,6 +195,7 @@ export default function App() {
             download={downloadState}
             onCancel={() => dispatchDownload({ type: 'SET_CANCELLED', value: true })}
             onReset={() => dispatchDownload({ type: 'RESET' })}
+            onLaunchGame={handleLaunchGame}
           />
         );
       case 'settings':

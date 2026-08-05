@@ -19,11 +19,12 @@ interface DownloadsViewProps {
   download: DownloadState | null;
   onCancel: () => void;
   onReset: () => void;
+  onLaunchGame?: (gameTitle: string) => void;
 }
 
 // ── Main Component ───────────────────────────────────────────
 
-export function DownloadsView({ download, onCancel, onReset }: DownloadsViewProps) {
+export function DownloadsView({ download, onCancel, onReset, onLaunchGame }: DownloadsViewProps) {
   const dl = download;
 
   // ── No active download → idle screen ─────────────────────
@@ -92,7 +93,8 @@ export function DownloadsView({ download, onCancel, onReset }: DownloadsViewProp
               <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: '13px', marginTop: '4px' }}>{dl.gameTitle}</p>
             </div>
             <button
-              className="flex items-center gap-2 px-6 py-3 rounded-xl"
+              onClick={() => onLaunchGame?.(dl.gameTitle)}
+              className="flex items-center gap-2 px-6 py-3 rounded-xl cursor-pointer hover:scale-105 transition-transform"
               style={{
                 background: 'linear-gradient(135deg, #059669, #10B981)',
                 boxShadow: '0 6px 20px rgba(16,185,129,0.35)',
