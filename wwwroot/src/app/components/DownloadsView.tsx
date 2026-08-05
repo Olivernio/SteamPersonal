@@ -10,6 +10,7 @@ export interface DownloadState {
   totalBytes: number;       // raw bytes
   currentFile: string;
   status: string;
+  phase: 'downloading' | 'extracting';
   gameTitle: string;
   completed: boolean;
   cancelled: boolean;
@@ -115,6 +116,7 @@ export function DownloadsView({ download, onCancel, onReset, onLaunchGame }: Dow
 
   // ── Active download ──────────────────────────────────────
   const isPaused = dl.status === 'Pausado';
+  const isExtracting = dl.phase === 'extracting';
 
   // Calculate ETA from speed
   const etaText = (() => {
@@ -126,6 +128,10 @@ export function DownloadsView({ download, onCancel, onReset, onLaunchGame }: Dow
     if (remainingSeconds < 3600) return `${Math.ceil(remainingSeconds / 60)} mins`;
     return `${(remainingSeconds / 3600).toFixed(1)} hrs`;
   })();
+
+  const phaseLabel = isPaused ? 'PAUSADO' : isExtracting ? 'EXTRAYENDO' : 'DESCARGANDO';
+  const phaseColor = isPaused ? '#EAB308' : isExtracting ? '#A78BFA' : '#60A5FA';
+  const dotColor = isPaused ? '#EAB308' : isExtracting ? '#8B5CF6' : '#3B82F6';
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -140,20 +146,33 @@ export function DownloadsView({ download, onCancel, onReset, onLaunchGame }: Dow
           {/* Card header */}
           <div
             className="px-5 py-3 flex items-center justify-between"
-            style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', backgroundColor: 'rgba(59,130,246,0.06)' }}
+            style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', backgroundColor: isExtracting ? 'rgba(139,92,246,0.06)' : 'rgba(59,130,246,0.06)' }}
           >
             <div className="flex items-center gap-2">
               <div
                 className="w-2 h-2 rounded-full"
                 style={{
-                  backgroundColor: isPaused ? '#EAB308' : '#3B82F6',
-                  boxShadow: isPaused ? '0 0 6px #EAB308' : '0 0 8px #3B82F6',
+                  backgroundColor: dotColor,
+                  boxShadow: `0 0 8px ${dotColor}`,
                   animation: isPaused ? 'none' : 'pulse 1.5s ease-in-out infinite',
                 }}
               />
-              <span style={{ color: isPaused ? '#EAB308' : '#60A5FA', fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em' }}>
-                {isPaused ? 'PAUSADO' : 'DESCARGANDO'}
+              <span style={{ color: phaseColor, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em' }}>
+                {phaseLabel}
               </span>
+              {!isPaused && (
+                <span
+                  className="px-2 py-0.5 rounded-md"
+                  style={{
+                    backgroundColor: isExtracting ? 'rgba(139,92,246,0.15)' : 'rgba(59,130,246,0.15)',
+                    color: isExtracting ? '#C4B5FD' : '#93C5FD',
+                    fontSize: '9px',
+                    fontWeight: 600,
+                  }}
+                >
+                  {isExtracting ? 'FASE 2/2' : 'FASE 1/2'}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <button

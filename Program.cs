@@ -85,6 +85,7 @@ namespace SteamPersonal
                     speed = e.Speed,
                     file = e.CurrentFile,
                     status = e.Status,
+                    phase = e.Phase,
                     gameTitle = _currentGameTitle
                 };
 

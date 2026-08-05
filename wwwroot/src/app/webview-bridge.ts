@@ -12,7 +12,8 @@ export interface DownloadProgressMessage {
   total: number;          // total bytes (0 if unknown)
   speed: number;          // bytes per second (calculated in C#)
   file: string;           // current file being extracted
-  status: string;         // "Conectando...", "Descargando y extrayendo...", "Pausado", etc.
+  status: string;         // "Conectando...", "Descargando...", "Extrayendo...", "Pausado", etc.
+  phase: 'downloading' | 'extracting'; // current phase
   gameTitle?: string;     // optional game title from backend
 }
 
