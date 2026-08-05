@@ -7,6 +7,8 @@ export interface SystemRequirements {
 
 export interface Game {
   id: number;
+  uuid?: string;
+  gameKey?: string;
   title: string;
   developer: string;
   publisher: string;
@@ -27,6 +29,8 @@ export interface Game {
   controllerSupport: boolean;
   size: string;
   downloadUrl?: string;
+  executableRelativePath?: string;
+  recipeSteps?: any[];
 }
 
 export const GAMES: Game[] = [

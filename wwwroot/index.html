@@ -13,10 +13,22 @@
     </head>
 
     <body>
-      
       <div id="root"></div>
+      <script>
+        window.onerror = function(msg, url, line, col, error) {
+          var errDiv = document.createElement('div');
+          errDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#111;color:#ff5555;padding:20px;z-index:999999;font-family:monospace;overflow:auto;font-size:14px;';
+          errDiv.innerHTML = '<h2 style="color:#ff5555;margin-top:0">Runtime Error</h2><pre>' + msg + '\nFile: ' + url + ':' + line + ':' + col + '\n\n' + (error && error.stack ? error.stack : '') + '</pre>';
+          document.body.appendChild(errDiv);
+        };
+        window.onunhandledrejection = function(e) {
+          var errDiv = document.createElement('div');
+          errDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#111;color:#ffaa00;padding:20px;z-index:999999;font-family:monospace;overflow:auto;font-size:14px;';
+          errDiv.innerHTML = '<h2 style="color:#ffaa00;margin-top:0">Unhandled Promise Rejection</h2><pre>' + (e.reason && e.reason.stack ? e.reason.stack : e.reason) + '</pre>';
+          document.body.appendChild(errDiv);
+        };
+      </script>
       <script type="module" src="/src/main.tsx"></script>
-      
     </body>
   </html>
   

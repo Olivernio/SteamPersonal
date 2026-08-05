@@ -7,6 +7,7 @@ import { DownloadsView, DownloadState } from './components/DownloadsView';
 import { SettingsView } from './components/SettingsView';
 import { ExploreView } from './components/ExploreView';
 import { Game, GAMES } from './data/games';
+import { fetchGamesFromSupabase } from './services/supabaseClient';
 import { onWebViewMessage, WebViewMessage, startDownload, launchGame } from './webview-bridge';
 
 // ── Download state reducer ─────────────────────────────────────
@@ -110,10 +111,21 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  const handleSync = useCallback(() => {
-    setSyncing(true);
-    setTimeout(() => setSyncing(false), 2200);
+  // ── Load games catalog from Supabase ─────────────────────────
+  const loadCatalog = useCallback(async () => {
+    const fetchedGames = await fetchGamesFromSupabase();
+    setGames(fetchedGames);
   }, []);
+
+  useEffect(() => {
+    loadCatalog();
+  }, [loadCatalog]);
+
+  const handleSync = useCallback(async () => {
+    setSyncing(true);
+    await loadCatalog();
+    setSyncing(false);
+  }, [loadCatalog]);
 
   const handleViewChange = useCallback((v: View) => {
     setView(v);
