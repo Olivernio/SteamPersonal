@@ -230,20 +230,17 @@ export default function App() {
         minWidth: 0,
       }}
     >
-      {/* Custom title bar */}
-      <WindowHeader onSync={handleSync} syncing={syncing} />
+      {/* Custom top navbar header (Migrated navigation tabs) */}
+      <WindowHeader
+        activeView={view}
+        onViewChange={handleViewChange}
+        downloadCount={activeDownloadCount}
+        onSync={handleSync}
+        syncing={syncing}
+      />
 
-      {/* App body */}
-      <div className="flex flex-1 min-h-0">
-        {/* Sidebar */}
-        <Sidebar
-          activeView={view}
-          onViewChange={handleViewChange}
-          downloadCount={activeDownloadCount}
-          onSync={handleSync}
-          syncing={syncing}
-        />
-
+      {/* App body (100% width main content) */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Main content */}
         <main className="flex-1 min-w-0 overflow-hidden" style={{ backgroundColor: '#0B0E14' }}>
           {renderContent()}

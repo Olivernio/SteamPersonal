@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowLeft, Play, Download, MessageSquare, Gamepad2, Calendar, HardDrive, ChevronDown, Monitor, Clock, Star, Package } from 'lucide-react';
+import { ArrowLeft, Play, Download, MessageSquare, Gamepad2, Calendar, HardDrive, ChevronDown, Monitor, Clock, Star, Package, Cloud, Settings, Info, Heart, Award, Building2, Megaphone } from 'lucide-react';
 import { Game } from '../data/games';
 
 interface GameDetailViewProps {
@@ -16,6 +16,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   const [requestSent, setRequestSent] = useState(false);
   const [requestCount, setRequestCount] = useState(game.requestCount);
   const [activeScreenshot, setActiveScreenshot] = useState(0);
+  const [subTab, setSubTab] = useState<'details' | 'dlcs' | 'mods'>('details');
 
   const handleRequestUpdate = () => {
     if (!requestSent) {
@@ -165,133 +166,571 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
 
   return (
     <div className="flex flex-col h-full overflow-hidden" style={{ backgroundColor: '#0B0E14' }}>
-      {/* Hero Banner */}
-      <div className="relative shrink-0 overflow-hidden" style={{ height: '280px' }}>
+      {/* Hero Banner (Steam Style) */}
+      <div className="relative shrink-0 overflow-hidden" style={{ height: '420px' }}>
         <img
           src={game.banner}
           alt={game.title}
           className="w-full h-full object-cover"
-          style={{ filter: 'brightness(0.55) saturate(1.2)', transform: 'scale(1.05)' }}
+          style={{ filter: 'brightness(0.7) saturate(1.25)', transform: 'scale(1.02)' }}
         />
-        {/* Overlay gradients */}
+        {/* Vignette Overlay (Steam Style Radial Edge Shadow) */}
         <div
-          className="absolute inset-0"
+          className="absolute inset-0 pointer-events-none"
           style={{
-            background: 'linear-gradient(to right, rgba(11,14,20,0.9) 0%, rgba(11,14,20,0.3) 60%, transparent 100%)',
+            background: 'radial-gradient(ellipse at center, transparent 35%, rgba(11,14,20,0.85) 100%)',
           }}
         />
+        {/* Left Dark Gradient */}
         <div
-          className="absolute inset-0"
-          style={{ background: 'linear-gradient(to top, rgba(11,14,20,1) 0%, transparent 50%)' }}
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background: 'linear-gradient(to right, rgba(11,14,20,0.92) 0%, rgba(11,14,20,0.5) 45%, transparent 80%)',
+          }}
+        />
+        {/* Bottom Fade Gradient */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{ background: 'linear-gradient(to top, #0B0E14 0%, rgba(11,14,20,0.7) 35%, transparent 70%)' }}
         />
 
-        {/* Back button */}
-        <button
-          onClick={onBack}
-          className="absolute top-4 left-4 flex items-center gap-2 px-3 py-2 rounded-xl transition-all duration-200"
-          style={{
-            background: 'rgba(0,0,0,0.5)',
-            backdropFilter: 'blur(12px)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            color: 'rgba(255,255,255,0.8)',
-            fontSize: '12px',
-          }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.7)'; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(0,0,0,0.5)'; }}
-        >
-          <ArrowLeft size={14} />
-          Biblioteca
-        </button>
-
-        {/* Game title in hero */}
-        <div className="absolute bottom-6 left-6">
-          <div className="flex items-center gap-2 mb-2">
-            <span
-              className="px-2 py-0.5 rounded-md"
-              style={{ background: 'rgba(99,102,241,0.8)', color: '#fff', fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em' }}
-            >
-              {game.genre.toUpperCase()}
-            </span>
-            {game.controllerSupport && (
-              <span
-                className="px-2 py-0.5 rounded-md flex items-center gap-1"
-                style={{ background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)', fontSize: '10px' }}
-              >
-                <Gamepad2 size={9} /> Mando
-              </span>
+        {/* Game title / Logo overlay in Hero (Clean 100% Unobstructed) */}
+        <div className="absolute bottom-8 left-8 right-8 flex items-end justify-between z-10">
+          <div className="space-y-2 max-w-2xl">
+            {game.logoUrl ? (
+              <img
+                src={game.logoUrl}
+                alt={game.title}
+                style={{
+                  maxHeight: '160px',
+                  maxWidth: '520px',
+                  objectFit: 'contain',
+                  filter: 'drop-shadow(0 8px 24px rgba(0,0,0,0.9))',
+                  display: 'block'
+                }}
+              />
+            ) : (
+              <h1 style={{ color: '#fff', fontSize: '38px', fontWeight: 900, letterSpacing: '-0.02em', textShadow: '0 4px 24px rgba(0,0,0,0.9)', margin: 0 }}>
+                {game.title}
+              </h1>
             )}
           </div>
-          <h1 style={{ color: '#fff', fontSize: '32px', fontWeight: 800, letterSpacing: '-0.02em', textShadow: '0 2px 20px rgba(0,0,0,0.8)' }}>
-            {game.title}
-          </h1>
-          <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '13px', marginTop: '4px' }}>{game.developer} · {game.publisher}</p>
         </div>
       </div>
 
-      {/* Content */}
+      {/* Steam Action Bar */}
+      <div
+        className="shrink-0 px-8 py-3 flex items-center justify-between"
+        style={{
+          backgroundColor: '#161922',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+          zIndex: 20
+        }}
+      >
+        <div className="flex items-center gap-6">
+          {/* Main Action Button (Play / Download / Update) */}
+          <div className="flex items-center rounded-lg overflow-hidden shrink-0">
+            {game.status === 'updated' ? (
+              <button
+                onClick={() => onLaunchGame?.(game.title)}
+                className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200"
+                style={{
+                  background: 'linear-gradient(135deg, #10B981, #059669)',
+                  color: '#fff',
+                  fontSize: '14px',
+                  fontWeight: 800,
+                  letterSpacing: '0.06em',
+                  cursor: 'pointer'
+                }}
+              >
+                <Play size={16} fill="currentColor" />
+                JUGAR
+              </button>
+            ) : game.status === 'update_available' ? (
+              <button
+                onClick={() => onStartDownload?.(game)}
+                className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200"
+                style={{
+                  background: 'linear-gradient(135deg, #3B82F6, #1D4ED8)',
+                  color: '#fff',
+                  fontSize: '14px',
+                  fontWeight: 800,
+                  letterSpacing: '0.06em',
+                  cursor: 'pointer'
+                }}
+              >
+                <Download size={16} />
+                ACTUALIZAR
+              </button>
+            ) : (
+              <button
+                onClick={handleRequestUpdate}
+                disabled={requestSent}
+                className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200"
+                style={{
+                  background: requestSent ? 'rgba(99,102,241,0.2)' : 'linear-gradient(135deg, #6366F1, #4F46E5)',
+                  color: '#fff',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: requestSent ? 'default' : 'pointer'
+                }}
+              >
+                <MessageSquare size={16} />
+                {requestSent ? 'SOLICITADO' : 'SOLICITAR UPDATE'}
+              </button>
+            )}
+
+            <button
+              className="px-2.5 py-2.5 flex items-center justify-center transition-colors"
+              style={{
+                backgroundColor: game.status === 'updated' ? '#047857' : game.status === 'update_available' ? '#1E40AF' : '#4338CA',
+                color: 'rgba(255,255,255,0.8)',
+                cursor: 'pointer'
+              }}
+            >
+              <ChevronDown size={14} />
+            </button>
+          </div>
+
+          {/* Metric 1: Estado Cloud */}
+          <div className="flex items-center gap-2.5">
+            <Cloud size={18} style={{ color: 'rgba(255,255,255,0.5)' }} />
+            <div>
+              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '9px', fontWeight: 700, letterSpacing: '0.05em' }}>
+                ESTADO DE CLOUD
+              </div>
+              <div style={{ color: '#E2E8F0', fontSize: '11px', fontWeight: 600 }}>
+                Actualizado
+              </div>
+            </div>
+          </div>
+
+          {/* Metric 2: Última Sesión */}
+          <div className="flex items-center gap-2.5">
+            <Calendar size={18} style={{ color: 'rgba(255,255,255,0.5)' }} />
+            <div>
+              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '9px', fontWeight: 700, letterSpacing: '0.05em' }}>
+                ÚLTIMA SESIÓN
+              </div>
+              <div style={{ color: '#E2E8F0', fontSize: '11px', fontWeight: 600 }}>
+                {game.hoursPlayed > 0 ? 'Reciente' : 'Nunca'}
+              </div>
+            </div>
+          </div>
+
+          {/* Metric 3: Tiempo de Juego */}
+          <div className="flex items-center gap-2.5">
+            <Clock size={18} style={{ color: 'rgba(255,255,255,0.5)' }} />
+            <div>
+              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '9px', fontWeight: 700, letterSpacing: '0.05em' }}>
+                TIEMPO DE JUEGO
+              </div>
+              <div style={{ color: '#E2E8F0', fontSize: '11px', fontWeight: 600 }}>
+                {game.hoursPlayed.toFixed(1)} horas
+              </div>
+            </div>
+          </div>
+
+          {/* Metric 4: Logros (Steam Mini Progress Bar) */}
+          <div className="flex items-center gap-2.5">
+            <Award size={18} style={{ color: 'rgba(255,255,255,0.5)' }} />
+            <div>
+              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '9px', fontWeight: 700, letterSpacing: '0.05em' }}>
+                LOGROS
+              </div>
+              <div className="flex items-center gap-2">
+                <span style={{ color: '#E2E8F0', fontSize: '11px', fontWeight: 600 }}>20/101</span>
+                <div className="w-16 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>
+                  <div className="h-full rounded-full" style={{ width: '20%', backgroundColor: '#60A5FA' }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right side quick actions */}
+        <div className="flex items-center gap-2">
+          <button
+            className="p-2 rounded-lg transition-colors"
+            style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}
+          >
+            <Settings size={15} />
+          </button>
+          <button
+            className="p-2 rounded-lg transition-colors"
+            style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}
+          >
+            <Gamepad2 size={15} />
+          </button>
+          <button
+            className="p-2 rounded-lg transition-colors"
+            style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}
+          >
+            <Info size={15} />
+          </button>
+          <button
+            className="p-2 rounded-lg transition-colors"
+            style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}
+          >
+            <Heart size={15} />
+          </button>
+        </div>
+      </div>
+
+      {/* Sub-Tab Navigation Bar (Steam Style: Detalles | DLCs | Mods) */}
+      <div
+        className="shrink-0 px-8 flex items-center gap-2 select-none"
+        style={{
+          backgroundColor: '#0F131C',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+        }}
+      >
+        {/* Tab 1: Detalles (Default) */}
+        <button
+          onClick={() => setSubTab('details')}
+          className="flex items-center gap-2 px-4 py-3 relative transition-colors"
+          style={{
+            color: subTab === 'details' ? '#FFF' : 'rgba(255,255,255,0.5)',
+            fontSize: '13px',
+            fontWeight: subTab === 'details' ? 700 : 500,
+            cursor: 'pointer',
+            border: 'none',
+            background: 'transparent',
+          }}
+        >
+          <span>Detalles</span>
+          {subTab === 'details' && (
+            <div
+              className="absolute bottom-0 left-0 right-0 h-0.5"
+              style={{ backgroundColor: '#6366F1', boxShadow: '0 0 10px #6366F1' }}
+            />
+          )}
+        </button>
+
+        {/* Tab 2: DLCs (Active if game.dlcs.length > 0, else Off) */}
+        <button
+          disabled={game.dlcs.length === 0}
+          onClick={() => setSubTab('dlcs')}
+          className="flex items-center gap-2 px-4 py-3 relative transition-colors"
+          style={{
+            color: game.dlcs.length === 0
+              ? 'rgba(255,255,255,0.2)'
+              : subTab === 'dlcs'
+              ? '#FFF'
+              : 'rgba(255,255,255,0.5)',
+            fontSize: '13px',
+            fontWeight: subTab === 'dlcs' ? 700 : 500,
+            cursor: game.dlcs.length === 0 ? 'not-allowed' : 'pointer',
+            border: 'none',
+            background: 'transparent',
+            opacity: game.dlcs.length === 0 ? 0.4 : 1,
+          }}
+        >
+          <span>DLCs</span>
+          <span
+            className="px-1.5 py-0.5 rounded-md text-xs"
+            style={{
+              backgroundColor: game.dlcs.length > 0 ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.05)',
+              color: game.dlcs.length > 0 ? '#A5B4FC' : 'rgba(255,255,255,0.3)',
+              fontSize: '10px',
+              fontWeight: 700,
+            }}
+          >
+            {game.dlcs.length}
+          </span>
+          {subTab === 'dlcs' && (
+            <div
+              className="absolute bottom-0 left-0 right-0 h-0.5"
+              style={{ backgroundColor: '#6366F1', boxShadow: '0 0 10px #6366F1' }}
+            />
+          )}
+        </button>
+
+        {/* Tab 3: Mods (Próximamente / Off) */}
+        <button
+          disabled
+          className="flex items-center gap-2 px-4 py-3 relative cursor-not-allowed"
+          style={{
+            color: 'rgba(255,255,255,0.2)',
+            fontSize: '13px',
+            fontWeight: 500,
+            border: 'none',
+            background: 'transparent',
+            opacity: 0.4,
+          }}
+        >
+          <span>Mods</span>
+          <span
+            className="px-1.5 py-0.5 rounded-md text-xs"
+            style={{
+              backgroundColor: 'rgba(255,255,255,0.05)',
+              color: 'rgba(255,255,255,0.3)',
+              fontSize: '9px',
+              fontWeight: 600,
+            }}
+          >
+            Próximamente
+          </span>
+        </button>
+      </div>
+
+      {/* Content Area */}
       <div className="flex-1 overflow-y-auto">
         <div className="flex gap-6 p-6">
           {/* Left column - main content */}
           <div className="flex-1 min-w-0 space-y-5">
-            {/* Description */}
-            <div
-              className="p-4 rounded-2xl"
-              style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
-            >
-              <p style={{ color: 'rgba(255,255,255,0.65)', fontSize: '13px', lineHeight: 1.7 }}>{game.description}</p>
-            </div>
+            {subTab === 'dlcs' ? (
+              /* DLCs Sub-Tab View */
+              <div
+                className="p-5 rounded-2xl space-y-4"
+                style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
+              >
+                <div className="flex items-center justify-between">
+                  <h3 style={{ color: '#E2E8F0', fontSize: '15px', fontWeight: 700 }}>
+                    Contenido Descargable e Expansiones (DLCs)
+                  </h3>
+                  <span
+                    className="px-2.5 py-1 rounded-lg text-xs"
+                    style={{ backgroundColor: 'rgba(99,102,241,0.15)', color: '#A5B4FC', fontWeight: 600 }}
+                  >
+                    {game.dlcs.length} packs activos
+                  </span>
+                </div>
 
-            {/* Metadata grid */}
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { icon: Calendar, label: 'Lanzamiento', value: new Date(game.releaseDate).toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' }) },
-                { icon: HardDrive, label: 'Tamaño', value: game.size },
-                { icon: Clock, label: 'Horas jugadas', value: `${game.hoursPlayed.toFixed(1)} hrs` },
-                { icon: Package, label: 'DLCs incluidos', value: `${game.dlcs.length} packs` },
-              ].map((item) => (
+                <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px' }}>
+                  Todos los DLCs listados a continuación están integrados automáticamente en la receta de instalación.
+                </p>
+
+                <div className="space-y-2">
+                  {game.dlcs.map((dlc, idx) => (
+                    <div
+                      key={dlc}
+                      className="flex items-center justify-between p-3.5 rounded-xl transition-colors"
+                      style={{ backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                          style={{ backgroundColor: 'rgba(99,102,241,0.15)', color: '#818CF8' }}
+                        >
+                          <Package size={16} />
+                        </div>
+                        <div>
+                          <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>{dlc}</div>
+                          <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px' }}>Pack oficial #{idx + 1}</div>
+                        </div>
+                      </div>
+
+                      <span
+                        className="px-2 py-0.5 rounded-md"
+                        style={{ backgroundColor: 'rgba(16,185,129,0.15)', color: '#10B981', fontSize: '10px', fontWeight: 700 }}
+                      >
+                        Incluido
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              /* Details Sub-Tab View (Default) */
+              <>
+                {/* Category / Genre & Controller Support Pure Text (Steam Style: No background, No border) */}
+                <div className="flex items-center justify-between py-0.5 select-none">
+                  {/* Left: Genre */}
+                  <div className="flex items-center gap-2">
+                    <span style={{ color: '#67C1F5', fontSize: '11px', fontWeight: 800, letterSpacing: '0.05em' }}>
+                      GÉNERO:
+                    </span>
+                    <span style={{ color: 'rgba(255,255,255,0.85)', fontSize: '12px', fontWeight: 500 }}>
+                      {game.genre}
+                    </span>
+                  </div>
+
+                  {/* Right: Controller Support (Far right end) */}
+                  {game.controllerSupport && (
+                    <div className="flex items-center gap-1.5 ml-auto" style={{ color: 'rgba(255,255,255,0.85)', fontSize: '12px', fontWeight: 500 }}>
+                      <Gamepad2 size={14} style={{ color: '#67C1F5' }} />
+                      <span>Soporte para mando completo</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Description 3-Column Block (Cover | Description | Dev & Publisher) */}
                 <div
-                  key={item.label}
-                  className="flex items-center gap-3 p-3 rounded-xl"
+                  className="p-5 rounded-2xl flex gap-5 items-start"
                   style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
                 >
-                  <div
-                    className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ backgroundColor: 'rgba(99,102,241,0.15)' }}
-                  >
-                    <item.icon size={15} style={{ color: '#818CF8' }} />
+                  {/* Left: Vertical Cover Image */}
+                  <div className="w-40 shrink-0 aspect-[2/3] rounded-xl overflow-hidden shadow-lg border border-white/10">
+                    <img
+                      src={game.cover}
+                      alt={game.title}
+                      className="w-full h-full object-cover"
+                    />
                   </div>
-                  <div>
-                    <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', fontWeight: 500 }}>{item.label}</div>
-                    <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>{item.value}</div>
+
+                  {/* Center: Full Game Description */}
+                  <div className="flex-1 min-w-0 space-y-2">
+                    <h3 style={{ color: '#E2E8F0', fontSize: '15px', fontWeight: 700 }}>
+                      Acerca del Juego
+                    </h3>
+                    <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '13px', lineHeight: 1.7 }}>
+                      {game.description}
+                    </p>
+                  </div>
+
+                  {/* Right: Developer & Publisher Info Card (Single if same company, Dual if different) */}
+                  {(() => {
+                    const isSameCompany =
+                      game.developer.trim().toLowerCase() === game.publisher.trim().toLowerCase();
+
+                    const renderCompanyLogo = (name: string, customLogoUrl?: string) => {
+                      if (customLogoUrl) {
+                        return (
+                          <img
+                            src={customLogoUrl}
+                            alt={name}
+                            className="w-8 h-8 rounded-lg object-contain bg-white/5 p-1 border border-white/10 shrink-0"
+                          />
+                        );
+                      }
+                      const initials = name
+                        .split(' ')
+                        .map((word) => word[0])
+                        .join('')
+                        .substring(0, 2)
+                        .toUpperCase();
+
+                      return (
+                        <div
+                          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                          style={{
+                            background: 'linear-gradient(135deg, rgba(99,102,241,0.25), rgba(59,130,246,0.25))',
+                            border: '1px solid rgba(99,102,241,0.3)',
+                            color: '#A5B4FC',
+                            fontSize: '11px',
+                            fontWeight: 800,
+                          }}
+                        >
+                          {initials}
+                        </div>
+                      );
+                    };
+
+                    if (isSameCompany) {
+                      return (
+                        <div
+                          className="w-64 shrink-0 p-4 rounded-xl"
+                          style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+                        >
+                          <div className="flex items-center gap-1.5 mb-2" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em' }}>
+                            <Building2 size={13} style={{ color: '#818CF8' }} /> DESARROLLADOR & EDITOR
+                          </div>
+
+                          <div className="flex items-center gap-3 p-2.5 rounded-lg" style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                            {renderCompanyLogo(game.developer, game.developerLogoUrl || game.publisherLogoUrl)}
+                            <div className="min-w-0 flex-1">
+                              <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 700 }} className="truncate">
+                                {game.developer}
+                              </div>
+                              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px' }}>
+                                Desarrollo & Publicación Oficial
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        className="w-64 shrink-0 p-4 rounded-xl space-y-3.5"
+                        style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+                      >
+                        {/* Developer section */}
+                        <div>
+                          <div className="flex items-center gap-1.5 mb-1.5" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em' }}>
+                            <Building2 size={12} style={{ color: '#818CF8' }} /> DESARROLLADOR
+                          </div>
+                          <div className="flex items-center gap-2.5">
+                            {renderCompanyLogo(game.developer, game.developerLogoUrl)}
+                            <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 700 }} className="truncate">
+                              {game.developer}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Publisher section */}
+                        <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
+                          <div className="flex items-center gap-1.5 mb-1.5" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em' }}>
+                            <Megaphone size={12} style={{ color: '#60A5FA' }} /> EDITOR / PUBLISHER
+                          </div>
+                          <div className="flex items-center gap-2.5">
+                            {renderCompanyLogo(game.publisher, game.publisherLogoUrl)}
+                            <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 700 }} className="truncate">
+                              {game.publisher}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Metadata grid */}
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { icon: Calendar, label: 'Lanzamiento', value: new Date(game.releaseDate).toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' }) },
+                    { icon: HardDrive, label: 'Tamaño', value: game.size },
+                    { icon: Clock, label: 'Horas jugadas', value: `${game.hoursPlayed.toFixed(1)} hrs` },
+                    { icon: Package, label: 'DLCs incluidos', value: `${game.dlcs.length} packs` },
+                  ].map((item) => (
+                    <div
+                      key={item.label}
+                      className="flex items-center gap-3 p-3 rounded-xl"
+                      style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
+                    >
+                      <div
+                        className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                        style={{ backgroundColor: 'rgba(99,102,241,0.15)' }}
+                      >
+                        <item.icon size={15} style={{ color: '#818CF8' }} />
+                      </div>
+                      <div>
+                        <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', fontWeight: 500 }}>{item.label}</div>
+                        <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>{item.value}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* DLC badges */}
+                <div
+                  className="p-4 rounded-2xl"
+                  style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
+                >
+                  <h3 style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600, marginBottom: '10px' }}>DLCs Incluidos</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {game.dlcs.map((dlc) => (
+                      <span
+                        key={dlc}
+                        className="px-2.5 py-1 rounded-lg"
+                        style={{
+                          background: 'rgba(99,102,241,0.12)',
+                          border: '1px solid rgba(99,102,241,0.25)',
+                          color: '#A5B4FC',
+                          fontSize: '11px',
+                          fontWeight: 500,
+                        }}
+                      >
+                        {dlc}
+                      </span>
+                    ))}
                   </div>
                 </div>
-              ))}
-            </div>
-
-            {/* DLC badges */}
-            <div
-              className="p-4 rounded-2xl"
-              style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
-            >
-              <h3 style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600, marginBottom: '10px' }}>DLCs Incluidos</h3>
-              <div className="flex flex-wrap gap-2">
-                {game.dlcs.map((dlc) => (
-                  <span
-                    key={dlc}
-                    className="px-2.5 py-1 rounded-lg"
-                    style={{
-                      background: 'rgba(99,102,241,0.12)',
-                      border: '1px solid rgba(99,102,241,0.25)',
-                      color: '#A5B4FC',
-                      fontSize: '11px',
-                      fontWeight: 500,
-                    }}
-                  >
-                    {dlc}
-                  </span>
-                ))}
-              </div>
-            </div>
+              </>
+            )}
 
             {/* System Requirements */}
             <div
