@@ -26,9 +26,47 @@ export interface Game {
   dlcs: string[];
   controllerSupport: boolean;
   size: string;
+  downloadUrl?: string;
 }
 
 export const GAMES: Game[] = [
+  {
+    id: 100,
+    title: 'Librarian: Tidy Up the Arcane Library!',
+    developer: 'Arcane Studio',
+    publisher: 'Arcane Publishing',
+    releaseDate: '2024-08-01',
+    genre: 'Puzzle / Adventure',
+    description:
+      'Organiza y ordena pergaminos místico-mágicos y tomos antiguos en la biblioteca arcana más peligrosa del reino.',
+    cover:
+      'https://images.unsplash.com/photo-1507842217343-583bb7270b66?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=400',
+    banner:
+      'https://images.unsplash.com/photo-1507842217343-583bb7270b66?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1080',
+    screenshots: [
+      'https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
+    ],
+    status: 'update_available',
+    currentVersion: 'v1.0',
+    latestVersion: 'v1.1 (Portable)',
+    hoursPlayed: 0,
+    requirements: {
+      min: 'OS: Windows 10 64-bit | CPU: Intel Core i3 | RAM: 4 GB | Storage: 500 MB',
+      rec: 'OS: Windows 11 64-bit | CPU: Intel Core i5 | RAM: 8 GB | Storage: 1 GB SSD',
+    },
+    changelog: [
+      {
+        version: 'v1.1',
+        date: '2024-08-05',
+        notes: ['Versión Portable lista para descarga directa de Google Drive.'],
+      },
+    ],
+    requestCount: 0,
+    dlcs: [],
+    controllerSupport: true,
+    size: '350 MB',
+    downloadUrl: 'https://drive.google.com/file/d/1iK4zCpfqz-E8bsrCWo8knvHYZhzZRjX0/view?usp=drive_link',
+  },
   {
     id: 1,
     title: 'Elden Nexus',
@@ -123,6 +161,7 @@ export const GAMES: Game[] = [
     dlcs: ['Neon Harbor', 'Chrome Arms Pack'],
     controllerSupport: true,
     size: '74.2 GB',
+    downloadUrl: 'https://drive.google.com/file/d/1BziDPAqWT5N5jV-5A2nB3d2Z5g7_wKk3/view',
   },
   {
     id: 3,

@@ -43,7 +43,7 @@ export function sendCommand(action: string, payload?: Record<string, unknown>): 
 }
 
 // Convenience functions matching the C# OnWebMessageReceived handler
-export const startDownload  = (url: string) => sendCommand('START_DOWNLOAD', { url });
+export const startDownload  = (url: string, gameTitle?: string) => sendCommand('START_DOWNLOAD', { url, gameTitle });
 export const pauseDownload  = () => sendCommand('PAUSE_DOWNLOAD');
 export const resumeDownload = () => sendCommand('RESUME_DOWNLOAD');
 export const cancelDownload = () => sendCommand('CANCEL_DOWNLOAD');

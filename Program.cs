@@ -14,6 +14,7 @@ namespace SteamPersonal
     {
         private static WebView2? _webView;
         private static GameDownloaderService _downloader = new GameDownloaderService();
+        private static string _currentGameTitle = "Descarga Activa";
 
         [STAThread]
         static void Main()
@@ -83,7 +84,7 @@ namespace SteamPersonal
                     speed = e.Speed,
                     file = e.CurrentFile,
                     status = e.Status,
-                    gameTitle = "Descarga Activa"  // TODO: pass real game title when starting download
+                    gameTitle = _currentGameTitle
                 };
 
                 SendToFrontend(payload);
@@ -114,6 +115,11 @@ namespace SteamPersonal
                 if (action == "START_DOWNLOAD")
                 {
                     string url = root.GetProperty("url").GetString() ?? "";
+                    if (root.TryGetProperty("gameTitle", out var titleProp))
+                    {
+                        _currentGameTitle = titleProp.GetString() ?? "Descarga Activa";
+                    }
+
                     string targetFolder = Path.Combine(Directory.GetCurrentDirectory(), "JuegoExtraido");
                     
                     _ = _downloader.StartDownloadAndExtractAsync(url, targetFolder);

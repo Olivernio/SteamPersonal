@@ -6,9 +6,10 @@ interface GameDetailViewProps {
   game: Game;
   onBack: () => void;
   onRequestUpdate: (gameId: number) => void;
+  onStartDownload?: (game: Game) => void;
 }
 
-export function GameDetailView({ game, onBack, onRequestUpdate }: GameDetailViewProps) {
+export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload }: GameDetailViewProps) {
   const [selectedVersion, setSelectedVersion] = useState(game.currentVersion);
   const [versionOpen, setVersionOpen] = useState(false);
   const [requestSent, setRequestSent] = useState(false);
@@ -67,6 +68,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate }: GameDetailView
       return (
         <div className="space-y-3">
           <button
+            onClick={() => onStartDownload?.(game)}
             className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl transition-all duration-200"
             style={{
               background: 'linear-gradient(135deg, #1D4ED8, #3B82F6)',

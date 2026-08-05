@@ -7,7 +7,7 @@ import { DownloadsView, DownloadState } from './components/DownloadsView';
 import { SettingsView } from './components/SettingsView';
 import { ExploreView } from './components/ExploreView';
 import { Game, GAMES } from './data/games';
-import { onWebViewMessage, WebViewMessage } from './webview-bridge';
+import { onWebViewMessage, WebViewMessage, startDownload } from './webview-bridge';
 
 // ── Download state reducer ─────────────────────────────────────
 
@@ -108,6 +108,31 @@ export default function App() {
     );
   }, []);
 
+  const handleStartDownload = useCallback((game: Game, customUrl?: string) => {
+    const targetUrl = customUrl || game.downloadUrl || 'https://drive.google.com/file/d/1BziDPAqWT5N5jV-5A2nB3d2Z5g7_wKk3/view';
+    
+    // Trigger C# download via WebView2 bridge
+    startDownload(targetUrl, game.title);
+
+    // Initialize state immediately in UI for instant responsiveness
+    dispatchDownload({
+      type: 'PROGRESS',
+      payload: {
+        progress: 0,
+        downloaded: 0,
+        total: 0,
+        speed: 0,
+        file: '',
+        status: 'Conectando al servidor...',
+        gameTitle: game.title,
+      },
+    });
+
+    // Switch to active downloads tab
+    setView('downloads');
+    setSelectedGame(null);
+  }, []);
+
   // Active download count for the sidebar badge
   const activeDownloadCount = downloadState && !downloadState.completed && !downloadState.cancelled ? 1 : 0;
 
@@ -118,6 +143,7 @@ export default function App() {
           game={selectedGame}
           onBack={handleBack}
           onRequestUpdate={handleRequestUpdate}
+          onStartDownload={handleStartDownload}
         />
       );
     }
@@ -128,6 +154,7 @@ export default function App() {
             games={games}
             onGameSelect={handleGameSelect}
             onRequestUpdate={handleRequestUpdate}
+            onStartDownload={handleStartDownload}
           />
         );
       case 'explore':

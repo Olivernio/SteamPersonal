@@ -8,6 +8,7 @@ interface LibraryViewProps {
   onGameSelect: (game: Game) => void;
   games: Game[];
   onRequestUpdate: (gameId: number) => void;
+  onStartDownload?: (game: Game) => void;
 }
 
 function StatusBadge({ status, current, latest }: { status: GameStatus; current: string; latest: string }) {
@@ -63,7 +64,7 @@ function StatusBadge({ status, current, latest }: { status: GameStatus; current:
   );
 }
 
-function GameCard({ game, onSelect, onRequestUpdate }: { game: Game; onSelect: () => void; onRequestUpdate: () => void }) {
+function GameCard({ game, onSelect, onRequestUpdate, onStartDownload }: { game: Game; onSelect: () => void; onRequestUpdate: () => void; onStartDownload?: () => void }) {
   const [hovered, setHovered] = useState(false);
 
   const actionButton = () => {
@@ -84,7 +85,7 @@ function GameCard({ game, onSelect, onRequestUpdate }: { game: Game; onSelect: (
         <button
           className="w-full flex items-center justify-center gap-2 py-2 rounded-lg transition-all duration-200"
           style={{ background: 'rgba(59,130,246,0.85)', color: '#fff', fontSize: '12px', fontWeight: 700, letterSpacing: '0.03em' }}
-          onClick={(e) => { e.stopPropagation(); onSelect(); }}
+          onClick={(e) => { e.stopPropagation(); onStartDownload ? onStartDownload() : onSelect(); }}
         >
           <Download size={12} />
           ACTUALIZAR A {game.latestVersion}
@@ -177,7 +178,7 @@ function GameCard({ game, onSelect, onRequestUpdate }: { game: Game; onSelect: (
   );
 }
 
-export function LibraryView({ onGameSelect, games, onRequestUpdate }: LibraryViewProps) {
+export function LibraryView({ onGameSelect, games, onRequestUpdate, onStartDownload }: LibraryViewProps) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterType>('all');
   const [sortOpen, setSortOpen] = useState(false);
@@ -311,6 +312,7 @@ export function LibraryView({ onGameSelect, games, onRequestUpdate }: LibraryVie
                 game={game}
                 onSelect={() => onGameSelect(game)}
                 onRequestUpdate={() => onRequestUpdate(game.id)}
+                onStartDownload={onStartDownload ? () => onStartDownload(game) : undefined}
               />
             ))}
           </div>
