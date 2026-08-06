@@ -31,6 +31,7 @@ export interface Game {
   downloadUrl?: string;
   executableRelativePath?: string;
   logoUrl?: string;
+  iconUrl?: string;
   developerLogoUrl?: string;
   publisherLogoUrl?: string;
   recipeSteps?: any[];

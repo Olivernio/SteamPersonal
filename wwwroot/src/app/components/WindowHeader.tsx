@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Minus, Square, X, Wifi, RefreshCw, BookOpen, Compass, Download, Settings, Gamepad2, ChevronRight } from 'lucide-react';
 import { View } from './Sidebar';
+import { minimizeWindow, maximizeWindow, closeWindow, dragWindow } from '../webview-bridge';
 
 interface WindowHeaderProps {
   activeView: View;
@@ -26,9 +27,17 @@ export function WindowHeader({
 }: WindowHeaderProps) {
   const [isMaximized, setIsMaximized] = useState(false);
 
+  const handleHeaderMouseDown = (e: React.MouseEvent) => {
+    // Only trigger drag if user clicked non-button elements
+    if ((e.target as HTMLElement).tagName !== 'BUTTON' && !(e.target as HTMLElement).closest('button')) {
+      dragWindow();
+    }
+  };
+
   return (
     <div
-      className="flex items-center justify-between px-4 h-12 shrink-0 select-none"
+      onMouseDown={handleHeaderMouseDown}
+      className="flex items-center justify-between px-4 h-12 shrink-0 select-none cursor-default"
       style={{
         backgroundColor: '#080B10',
         borderBottom: '1px solid rgba(255,255,255,0.08)',
@@ -152,6 +161,8 @@ export function WindowHeader({
         {/* Window controls */}
         <div className="flex items-center gap-1 ml-2">
           <button
+            onClick={minimizeWindow}
+            title="Minimizar"
             className="flex items-center justify-center w-8 h-7 rounded-md transition-all duration-150"
             style={{ color: 'rgba(255,255,255,0.45)', cursor: 'pointer' }}
             onMouseEnter={(e) => {
@@ -166,9 +177,13 @@ export function WindowHeader({
             <Minus size={12} />
           </button>
           <button
+            onClick={() => {
+              setIsMaximized(!isMaximized);
+              maximizeWindow();
+            }}
+            title={isMaximized ? 'Restaurar' : 'Maximizar'}
             className="flex items-center justify-center w-8 h-7 rounded-md transition-all duration-150"
             style={{ color: 'rgba(255,255,255,0.45)', cursor: 'pointer' }}
-            onClick={() => setIsMaximized(!isMaximized)}
             onMouseEnter={(e) => {
               (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.08)';
               (e.currentTarget as HTMLButtonElement).style.color = 'rgba(255,255,255,0.9)';
@@ -181,6 +196,8 @@ export function WindowHeader({
             <Square size={11} />
           </button>
           <button
+            onClick={closeWindow}
+            title="Cerrar"
             className="flex items-center justify-center w-8 h-7 rounded-md transition-all duration-150"
             style={{ color: 'rgba(255,255,255,0.45)', cursor: 'pointer' }}
             onMouseEnter={(e) => {

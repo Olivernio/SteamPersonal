@@ -108,3 +108,13 @@ TO authenticated
 USING (true);
 
 ALTER TABLE games ADD COLUMN logo_image_url TEXT;
+
+-- Agregar columnas faltantes para metadatos completos del UX
+ALTER TABLE public.games 
+ADD COLUMN IF NOT EXISTS developer_logo_url TEXT,
+ADD COLUMN IF NOT EXISTS publisher_logo_url TEXT,
+ADD COLUMN IF NOT EXISTS icon_url TEXT,
+ADD COLUMN IF NOT EXISTS dlcs JSONB NOT NULL DEFAULT '[]'::jsonb,
+ADD COLUMN IF NOT EXISTS controller_support BOOLEAN NOT NULL DEFAULT true,
+ADD COLUMN IF NOT EXISTS requirements JSONB NOT NULL DEFAULT '{"min": "OS: Windows 10 64-bit | RAM: 8 GB", "rec": "OS: Windows 11 64-bit | RAM: 16 GB"}'::jsonb,
+ADD COLUMN IF NOT EXISTS screenshots JSONB NOT NULL DEFAULT '[]'::jsonb;

@@ -6,6 +6,7 @@ export interface SteamAppDetails {
   description: string;
   coverUrl: string;
   bannerUrl: string;
+  iconUrl: string;
   releaseDate: string;
   gameKey: string;
   controllerSupport?: boolean;
@@ -70,6 +71,7 @@ export async function fetchSteamGameDetails(appId: string | number): Promise<Ste
 
   const coverUrl = data.header_image || `https://cdn.akamai.steamstatic.com/steam/apps/${cleanAppId}/header.jpg`;
   const bannerUrl = data.background || data.header_image || '';
+  const iconUrl = `https://cdn.akamai.steamstatic.com/steam/apps/${cleanAppId}/capsule_sm_120.jpg`;
   const releaseDate = data.release_date?.date || new Date().toISOString().split('T')[0];
 
   const title = data.name || 'Juego Importado';
@@ -98,10 +100,51 @@ export async function fetchSteamGameDetails(appId: string | number): Promise<Ste
     description: cleanDesc,
     coverUrl,
     bannerUrl,
+    iconUrl,
     releaseDate,
     gameKey,
     controllerSupport,
     requirements: { min: reqMin, rec: reqRec },
     screenshots
   };
+}
+
+export interface SteamSearchResult {
+  appId: number;
+  name: string;
+  tinyImage: string;
+}
+
+/**
+ * Searches Steam store for games matching a text query.
+ */
+export async function searchSteamGames(query: string): Promise<SteamSearchResult[]> {
+  const cleanQuery = query.trim();
+  if (!cleanQuery) return [];
+
+  const targetUrl = `https://store.steampowered.com/api/storesearch/?term=${encodeURIComponent(cleanQuery)}&l=spanish&cc=ES`;
+  const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+
+  let response: Response;
+  try {
+    response = await fetch(proxyUrl);
+    if (!response.ok) response = await fetch(targetUrl);
+  } catch {
+    response = await fetch(targetUrl);
+  }
+
+  if (!response.ok) return [];
+
+  try {
+    const json = await response.json();
+    if (!json || !Array.isArray(json.items)) return [];
+
+    return json.items.map((item: any) => ({
+      appId: item.id,
+      name: item.name,
+      tinyImage: item.tiny_image || `https://cdn.akamai.steamstatic.com/steam/apps/${item.id}/header.jpg`
+    }));
+  } catch {
+    return [];
+  }
 }

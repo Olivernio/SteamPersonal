@@ -19,6 +19,7 @@ export interface DbGame {
   cover_image_url?: string;
   header_banner_url?: string;
   logo_image_url?: string;
+  icon_url?: string;
   description?: string;
   latest_official_version: string;
   size_bytes: number;

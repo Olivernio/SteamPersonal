@@ -30,6 +30,7 @@ export interface SupabaseGame {
   cover_image_url?: string;
   header_banner_url?: string;
   logo_image_url?: string;
+  icon_url?: string;
   description?: string;
   latest_official_version: string;
   size_bytes: number;
@@ -129,6 +130,7 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
         downloadUrl: row.download_url,
         executableRelativePath: row.executable_relative_path,
         logoUrl: row.logo_image_url || undefined,
+        iconUrl: row.icon_url || undefined,
         recipeSteps: recipeSteps
       };
     });

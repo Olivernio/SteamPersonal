@@ -69,6 +69,11 @@ export const pauseDownload  = () => sendCommand('PAUSE_DOWNLOAD');
 export const resumeDownload = () => sendCommand('RESUME_DOWNLOAD');
 export const cancelDownload = () => sendCommand('CANCEL_DOWNLOAD');
 
+export const minimizeWindow = () => sendCommand('MINIMIZE_WINDOW');
+export const maximizeWindow = () => sendCommand('MAXIMIZE_WINDOW');
+export const closeWindow    = () => sendCommand('CLOSE_WINDOW');
+export const dragWindow     = () => sendCommand('DRAG_WINDOW');
+
 // ── Listen for messages from C# ──────────────────────────────
 
 /**

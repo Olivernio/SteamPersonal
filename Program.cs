@@ -1,6 +1,8 @@
 using System;
+using System.Drawing;
 using System.IO;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -10,8 +12,76 @@ using SteamPersonal.Services;
 
 namespace SteamPersonal
 {
+    public class CustomMainForm : Form
+    {
+        private const int WM_NCHITTEST = 0x84;
+        private const int HTCLIENT = 0x1;
+        private const int HTCAPTION = 0x2;
+        private const int HTLEFT = 10;
+        private const int HTRIGHT = 11;
+        private const int HTTOP = 12;
+        private const int HTTOPLEFT = 13;
+        private const int HTTOPRIGHT = 14;
+        private const int HTBOTTOM = 15;
+        private const int HTBOTTOMLEFT = 16;
+        private const int HTBOTTOMRIGHT = 17;
+
+        public CustomMainForm()
+        {
+            Text = "Steam Personal";
+            Width = 1280;
+            Height = 800;
+            StartPosition = FormStartPosition.CenterScreen;
+            FormBorderStyle = FormBorderStyle.None;
+            DoubleBuffered = true;
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+
+            if (m.Msg == WM_NCHITTEST)
+            {
+                // Enable resizing borders even with FormBorderStyle.None
+                Point pos = PointToClient(new Point(m.LParam.ToInt32()));
+                int border = 6;
+
+                if (pos.X <= border)
+                {
+                    if (pos.Y <= border) m.Result = (IntPtr)HTTOPLEFT;
+                    else if (pos.Y >= ClientSize.Height - border) m.Result = (IntPtr)HTBOTTOMLEFT;
+                    else m.Result = (IntPtr)HTLEFT;
+                }
+                else if (pos.X >= ClientSize.Width - border)
+                {
+                    if (pos.Y <= border) m.Result = (IntPtr)HTTOPRIGHT;
+                    else if (pos.Y >= ClientSize.Height - border) m.Result = (IntPtr)HTBOTTOMRIGHT;
+                    else m.Result = (IntPtr)HTRIGHT;
+                }
+                else if (pos.Y >= ClientSize.Height - border)
+                {
+                    m.Result = (IntPtr)HTBOTTOM;
+                }
+                else if (pos.Y <= border)
+                {
+                    m.Result = (IntPtr)HTTOP;
+                }
+            }
+        }
+    }
+
     static class Program
     {
+        [DllImport("user32.dll")]
+        public static extern bool ReleaseCapture();
+
+        [DllImport("user32.dll")]
+        public static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
+
+        private const int WM_NCLBUTTONDOWN = 0xA1;
+        private const int HT_CAPTION = 0x2;
+
+        private static CustomMainForm? _mainForm;
         private static WebView2? _webView;
         private static GameDownloaderService _downloader = new GameDownloaderService();
         private static GameRecipeService _recipeService = new GameRecipeService(_downloader);
@@ -25,22 +95,14 @@ namespace SteamPersonal
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            // Crear ventana de Windows personalizada
-            var mainForm = new Form
-            {
-                Text = "Steam Personal",
-                Width = 1280,
-                Height = 800,
-                StartPosition = FormStartPosition.CenterScreen,
-                FormBorderStyle = FormBorderStyle.Sizable
-            };
+            _mainForm = new CustomMainForm();
 
             _webView = new WebView2 { Dock = DockStyle.Fill };
-            mainForm.Controls.Add(_webView);
+            _mainForm.Controls.Add(_webView);
 
-            mainForm.Load += async (s, e) => await InitializeWebViewAsync();
+            _mainForm.Load += async (s, e) => await InitializeWebViewAsync();
 
-            Application.Run(mainForm);
+            Application.Run(_mainForm);
         }
 
         private static async Task InitializeWebViewAsync()
@@ -131,7 +193,36 @@ namespace SteamPersonal
 
                 string action = root.GetProperty("action").GetString() ?? "";
 
-                if (action == "START_DOWNLOAD")
+                if (action == "MINIMIZE_WINDOW")
+                {
+                    _mainForm?.Invoke(new Action(() => _mainForm.WindowState = FormWindowState.Minimized));
+                }
+                else if (action == "MAXIMIZE_WINDOW")
+                {
+                    _mainForm?.Invoke(new Action(() =>
+                    {
+                        if (_mainForm.WindowState == FormWindowState.Maximized)
+                            _mainForm.WindowState = FormWindowState.Normal;
+                        else
+                            _mainForm.WindowState = FormWindowState.Maximized;
+                    }));
+                }
+                else if (action == "CLOSE_WINDOW")
+                {
+                    _mainForm?.Invoke(new Action(() => _mainForm.Close()));
+                }
+                else if (action == "DRAG_WINDOW")
+                {
+                    _mainForm?.Invoke(new Action(() =>
+                    {
+                        if (_mainForm != null && _mainForm.WindowState != FormWindowState.Maximized)
+                        {
+                            ReleaseCapture();
+                            SendMessage(_mainForm.Handle, WM_NCLBUTTONDOWN, HT_CAPTION, 0);
+                        }
+                    }));
+                }
+                else if (action == "START_DOWNLOAD")
                 {
                     string url = root.GetProperty("url").GetString() ?? "";
                     if (root.TryGetProperty("gameTitle", out var titleProp))

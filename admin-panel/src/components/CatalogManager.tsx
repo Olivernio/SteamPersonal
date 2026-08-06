@@ -1,15 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseAdmin';
 import type { DbGame, RecipeStep } from '../services/supabaseAdmin';
-import { fetchSteamGameDetails } from '../services/steamService';
+import { fetchSteamGameDetails, searchSteamGames } from '../services/steamService';
+import type { SteamSearchResult } from '../services/steamService';
 import { VisualRecipeBuilder } from './VisualRecipeBuilder';
-import { Plus, Edit2, Trash2, RefreshCw, Layers, Zap } from 'lucide-react';
+import { Plus, Edit2, Trash2, RefreshCw, Layers, Zap, Search, Flame, ArrowUpDown, MessageSquare, CheckCircle2 } from 'lucide-react';
 
 export const CatalogManager: React.FC = () => {
   const [games, setGames] = useState<DbGame[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingGame, setEditingGame] = useState<DbGame | null>(null);
+
+  // Sorting & Filtering state
+  const [sortBy, setSortBy] = useState<'requests' | 'recent' | 'alphabetical'>('requests');
+
+  // Steam Search Modal state
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SteamSearchResult[]>([]);
+  const [searchingSteam, setSearchingSteam] = useState(false);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -26,6 +36,7 @@ export const CatalogManager: React.FC = () => {
   const [coverUrl, setCoverUrl] = useState('');
   const [bannerUrl, setBannerUrl] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
+  const [iconUrl, setIconUrl] = useState('');
   const [version, setVersion] = useState('1.0.0');
   const [dlcsText, setDlcsText] = useState('');
   const [controllerSupport, setControllerSupport] = useState(true);
@@ -36,15 +47,16 @@ export const CatalogManager: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [importingSteam, setImportingSteam] = useState(false);
 
-  const handleImportSteam = async () => {
-    if (!steamAppId) {
+  const handleImportSteam = async (overrideAppId?: string | number) => {
+    const targetAppId = String(overrideAppId || steamAppId).trim();
+    if (!targetAppId) {
       alert('Ingresa primero el Steam AppID (ej: 1091500)');
       return;
     }
 
     setImportingSteam(true);
     try {
-      const details = await fetchSteamGameDetails(steamAppId);
+      const details = await fetchSteamGameDetails(targetAppId);
       setTitle(details.title);
       setGameKey(details.gameKey);
       setDeveloper(details.developer);
@@ -52,6 +64,7 @@ export const CatalogManager: React.FC = () => {
       setGenre(details.genre);
       setCoverUrl(details.coverUrl);
       if (details.bannerUrl) setBannerUrl(details.bannerUrl);
+      if (details.iconUrl) setIconUrl(details.iconUrl);
       if (details.description) setDescription(details.description);
       if (details.controllerSupport !== undefined) setControllerSupport(details.controllerSupport);
       if (details.requirements) {
@@ -66,13 +79,32 @@ export const CatalogManager: React.FC = () => {
       setSteps((prev) =>
         prev.map((s) => (s.action === 'create_shortcut' ? { ...s, shortcut_name: details.title } : s))
       );
-
-      alert(`✅ ¡Metadatos importados desde Steam con éxito!\n\nTítulo: ${details.title}\nDesarrollador: ${details.developer}\nEditor: ${details.publisher || 'N/A'}\nGénero: ${details.genre}`);
     } catch (err: any) {
       alert(`Error al importar de Steam: ${err.message}`);
     } finally {
       setImportingSteam(false);
     }
+  };
+
+  const handleSearchSteam = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    setSearchingSteam(true);
+    try {
+      const results = await searchSteamGames(searchQuery);
+      setSearchResults(results);
+    } catch (err: any) {
+      alert(`Error al buscar en Steam: ${err.message}`);
+    } finally {
+      setSearchingSteam(false);
+    }
+  };
+
+  const selectSteamResult = (result: SteamSearchResult) => {
+    setSteamAppId(String(result.appId));
+    setSearchModalOpen(false);
+    handleImportSteam(result.appId);
   };
 
   const fetchCatalog = async () => {
@@ -92,6 +124,22 @@ export const CatalogManager: React.FC = () => {
     fetchCatalog();
   }, []);
 
+  const sortedGames = [...games].sort((a, b) => {
+    if (sortBy === 'requests') {
+      return (b.request_count || 0) - (a.request_count || 0);
+    }
+    if (sortBy === 'recent') {
+      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+    }
+    if (sortBy === 'alphabetical') {
+      return a.title.localeCompare(b.title);
+    }
+    return 0;
+  });
+
+  const totalRequests = games.reduce((acc, g) => acc + (g.request_count || 0), 0);
+  const pendingUpdateGames = games.filter((g) => (g.request_count || 0) > 0).length;
+
   const openCreateModal = () => {
     setEditingGame(null);
     setTitle('');
@@ -108,6 +156,7 @@ export const CatalogManager: React.FC = () => {
     setCoverUrl('');
     setBannerUrl('');
     setLogoUrl('');
+    setIconUrl('');
     setVersion('1.0.0');
     setDlcsText('');
     setControllerSupport(true);
@@ -138,6 +187,7 @@ export const CatalogManager: React.FC = () => {
     setCoverUrl(game.cover_image_url || '');
     setBannerUrl(game.header_banner_url || '');
     setLogoUrl(game.logo_image_url || '');
+    setIconUrl(game.icon_url || '');
     setVersion(game.latest_official_version || '1.0.0');
     setDlcsText(Array.isArray(game.dlcs) ? game.dlcs.join(', ') : '');
     setControllerSupport(game.controller_support ?? true);
@@ -194,6 +244,7 @@ export const CatalogManager: React.FC = () => {
       cover_image_url: coverUrl,
       header_banner_url: bannerUrl,
       logo_image_url: logoUrl,
+      icon_url: iconUrl || null,
       latest_official_version: version,
       is_active: true,
       dlcs,
@@ -300,11 +351,59 @@ export const CatalogManager: React.FC = () => {
         </div>
       </div>
 
+      {/* Requests Dashboard Stats & Filters Bar */}
+      <div style={{ padding: '16px 24px', backgroundColor: '#0F131C', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '8px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <Layers size={15} style={{ color: '#818CF8' }} />
+            <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)' }}>Catálogo:</span>
+            <strong style={{ fontSize: '13px', color: '#E2E8F0' }}>{games.length} juegos</strong>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '8px', backgroundColor: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.25)' }}>
+            <Flame size={15} style={{ color: '#F97316' }} />
+            <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>Solicitudes Totales:</span>
+            <strong style={{ fontSize: '13px', color: '#FB923C' }}>{totalRequests} peticiones</strong>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '8px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)' }}>
+            <MessageSquare size={15} style={{ color: '#EF4444' }} />
+            <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)' }}>Requieren Update:</span>
+            <strong style={{ fontSize: '13px', color: '#FCA5A5' }}>{pendingUpdateGames} juegos</strong>
+          </div>
+        </div>
+
+        {/* Sort selector */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <ArrowUpDown size={14} style={{ color: 'rgba(255,255,255,0.4)' }} />
+          <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.5)' }}>Ordenar por:</span>
+          <select
+            value={sortBy}
+            onChange={(e: any) => setSortBy(e.target.value)}
+            style={{
+              padding: '6px 12px',
+              borderRadius: '8px',
+              backgroundColor: 'rgba(0,0,0,0.4)',
+              border: '1px solid rgba(255,255,255,0.12)',
+              color: '#E2E8F0',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              outline: 'none'
+            }}
+          >
+            <option value="requests">🔥 Más Solicitados Primero</option>
+            <option value="recent">🕒 Agregados Recientemente</option>
+            <option value="alphabetical">🔤 Alfabético (A-Z)</option>
+          </select>
+        </div>
+      </div>
+
       {/* Main Grid / Table */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
         {loading ? (
           <div style={{ color: 'rgba(255,255,255,0.4)', textAlign: 'center', padding: '40px' }}>Cargando catálogo...</div>
-        ) : games.length === 0 ? (
+        ) : sortedGames.length === 0 ? (
           <div style={{ padding: '48px', textAlign: 'center', backgroundColor: '#151922', borderRadius: '16px', border: '1px dashed rgba(255,255,255,0.1)' }}>
             <Layers size={40} style={{ color: 'rgba(255,255,255,0.2)', marginBottom: '12px' }} />
             <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '14px', margin: 0 }}>No hay juegos en la base de datos.</p>
@@ -317,62 +416,158 @@ export const CatalogManager: React.FC = () => {
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
-            {games.map((g) => (
-              <div
-                key={g.id}
-                style={{
-                  borderRadius: '12px',
-                  backgroundColor: '#151922',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  overflow: 'hidden',
-                  display: 'flex',
-                  flexDirection: 'column'
-                }}
-              >
-                <div style={{ height: '140px', backgroundColor: '#0B0E14', position: 'relative', overflow: 'hidden' }}>
-                  {g.cover_image_url ? (
-                    <img src={g.cover_image_url} alt={g.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  ) : (
-                    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.2)', fontSize: '32px' }}>🎮</div>
-                  )}
-                  <span style={{ position: 'absolute', top: '8px', right: '8px', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', color: '#A5B4FC', fontSize: '10px', fontWeight: 700 }}>
-                    {g.latest_official_version}
-                  </span>
-                </div>
+            {sortedGames.map((g) => {
+              const reqCount = g.request_count || 0;
+              const isHighPriority = reqCount > 5;
+              const isMediumPriority = reqCount > 0 && reqCount <= 5;
 
-                <div style={{ padding: '14px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                  <div>
-                    <h3 style={{ margin: '0 0 4px', fontSize: '14px', color: '#E2E8F0', fontWeight: 600 }}>{g.title}</h3>
-                    <p style={{ margin: 0, fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>{g.developer} · {g.publisher || 'Indie'} · {g.genre}</p>
+              return (
+                <div
+                  key={g.id}
+                  style={{
+                    borderRadius: '12px',
+                    backgroundColor: '#151922',
+                    border: isHighPriority
+                      ? '1px solid rgba(239,68,68,0.4)'
+                      : isMediumPriority
+                      ? '1px solid rgba(245,158,11,0.3)'
+                      : '1px solid rgba(255,255,255,0.08)',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    position: 'relative'
+                  }}
+                >
+                  <div style={{ height: '140px', backgroundColor: '#0B0E14', position: 'relative', overflow: 'hidden' }}>
+                    {g.cover_image_url ? (
+                      <img src={g.cover_image_url} alt={g.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.2)', fontSize: '32px' }}>🎮</div>
+                    )}
+                    <span style={{ position: 'absolute', top: '8px', right: '8px', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', color: '#A5B4FC', fontSize: '10px', fontWeight: 700 }}>
+                      {g.latest_official_version}
+                    </span>
                   </div>
 
-                  <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.35)' }}>
-                      {g.request_count || 0} peticiones
-                    </span>
+                  <div style={{ padding: '14px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                    <div>
+                      <h3 style={{ margin: '0 0 4px', fontSize: '14px', color: '#E2E8F0', fontWeight: 600 }}>{g.title}</h3>
+                      <p style={{ margin: 0, fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>{g.developer} · {g.publisher || 'Indie'} · {g.genre}</p>
+                    </div>
 
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <button
-                        onClick={() => openEditModal(g)}
-                        style={{ padding: '6px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)', cursor: 'pointer' }}
-                      >
-                        <Edit2 size={13} />
-                      </button>
+                    <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      {isHighPriority ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '6px', backgroundColor: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.4)', color: '#FCA5A5', fontSize: '11px', fontWeight: 700 }}>
+                          <Flame size={12} style={{ color: '#EF4444' }} /> 🔥 {reqCount} peticiones
+                        </span>
+                      ) : isMediumPriority ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '6px', backgroundColor: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.3)', color: '#FDE047', fontSize: '11px', fontWeight: 700 }}>
+                          <MessageSquare size={12} style={{ color: '#F59E0B' }} /> 📩 {reqCount} peticiones
+                        </span>
+                      ) : (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '3px 8px', borderRadius: '6px', backgroundColor: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.25)', color: '#6EE7B7', fontSize: '10px', fontWeight: 600 }}>
+                          <CheckCircle2 size={11} style={{ color: '#10B981' }} /> Actualizado
+                        </span>
+                      )}
 
-                      <button
-                        onClick={() => handleDelete(g.id!, g.title)}
-                        style={{ padding: '6px', borderRadius: '6px', backgroundColor: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#FCA5A5', cursor: 'pointer' }}
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button
+                          onClick={() => openEditModal(g)}
+                          style={{ padding: '6px', borderRadius: '6px', backgroundColor: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)', cursor: 'pointer' }}
+                        >
+                          <Edit2 size={13} />
+                        </button>
+
+                        <button
+                          onClick={() => handleDelete(g.id!, g.title)}
+                          style={{ padding: '6px', borderRadius: '6px', backgroundColor: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#FCA5A5', cursor: 'pointer' }}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
+
+      {/* Steam Interactive Search Modal */}
+      {searchModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: '24px' }}>
+          <div style={{ width: '600px', backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.12)', borderRadius: '16px', overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '80vh' }}>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Search size={18} style={{ color: '#F59E0B' }} />
+                <h3 style={{ margin: 0, color: '#E2E8F0', fontSize: '15px', fontWeight: 700 }}>Buscar Juego en Steam Store</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSearchModalOpen(false)}
+                style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', fontSize: '18px', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSearchSteam} style={{ padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', gap: '8px' }}>
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Escribe el nombre del juego (ej: Cyberpunk 2077, Elden Ring, Hades)..."
+                autoFocus
+                style={{ flex: 1, padding: '10px 12px', borderRadius: '8px', backgroundColor: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.12)', color: '#E2E8F0', fontSize: '13px' }}
+              />
+              <button
+                type="submit"
+                disabled={searchingSteam}
+                style={{ padding: '10px 16px', borderRadius: '8px', backgroundColor: '#F59E0B', border: 'none', color: '#000', fontWeight: 700, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                {searchingSteam ? 'Buscando...' : 'Buscar'}
+              </button>
+            </form>
+
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {searchResults.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '32px', color: 'rgba(255,255,255,0.4)', fontSize: '13px' }}>
+                  {searchingSteam ? 'Consultando API de Steam Store...' : 'Ingresa el nombre del juego arriba y presiona Buscar.'}
+                </div>
+              ) : (
+                searchResults.map((item) => (
+                  <div
+                    key={item.appId}
+                    onClick={() => selectSteamResult(item)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      backgroundColor: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                      cursor: 'pointer',
+                      transition: 'background-color 0.15s ease'
+                    }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(99,102,241,0.15)'; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = 'rgba(255,255,255,0.03)'; }}
+                  >
+                    <img src={item.tinyImage} alt={item.name} style={{ width: '80px', height: '40px', objectFit: 'cover', borderRadius: '6px' }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>{item.name}</div>
+                      <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>Steam AppID: {item.appId}</div>
+                    </div>
+                    <span style={{ padding: '4px 10px', borderRadius: '6px', backgroundColor: 'rgba(245,158,11,0.2)', color: '#FDE047', fontSize: '11px', fontWeight: 700 }}>
+                      ⚡ Seleccionar e Importar
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create / Edit Modal */}
       {modalOpen && (
@@ -459,8 +654,9 @@ export const CatalogManager: React.FC = () => {
                     />
                     <button
                       type="button"
-                      onClick={handleImportSteam}
+                      onClick={() => handleImportSteam()}
                       disabled={importingSteam}
+                      title="Importar usando el AppID ingresado"
                       style={{
                         padding: '8px 10px',
                         borderRadius: '8px',
@@ -477,6 +673,30 @@ export const CatalogManager: React.FC = () => {
                       }}
                     >
                       <Zap size={12} /> {importingSteam ? '...' : 'Steam'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchQuery(title || '');
+                        setSearchModalOpen(true);
+                      }}
+                      title="Buscar en Steam por nombre"
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: '8px',
+                        backgroundColor: 'rgba(99,102,241,0.2)',
+                        border: '1px solid rgba(99,102,241,0.4)',
+                        color: '#A5B4FC',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      <Search size={12} /> Buscar
                     </button>
                   </div>
                 </div>
@@ -549,9 +769,9 @@ export const CatalogManager: React.FC = () => {
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: 'rgba(255,255,255,0.5)', marginBottom: '4px' }}>Portada Vertical (Cover 2:3)</label>
+                  <label style={{ display: 'block', fontSize: '12px', color: 'rgba(255,255,255,0.5)', marginBottom: '4px' }}>Portada (Cover 2:3)</label>
                   <input
                     value={coverUrl}
                     onChange={(e) => setCoverUrl(e.target.value)}
@@ -560,7 +780,7 @@ export const CatalogManager: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: 'rgba(255,255,255,0.5)', marginBottom: '4px' }}>Fondo Hero (Banner HD)</label>
+                  <label style={{ display: 'block', fontSize: '12px', color: 'rgba(255,255,255,0.5)', marginBottom: '4px' }}>Fondo (Banner HD)</label>
                   <input
                     value={bannerUrl}
                     onChange={(e) => setBannerUrl(e.target.value)}
@@ -569,11 +789,20 @@ export const CatalogManager: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: '12px', color: 'rgba(255,255,255,0.5)', marginBottom: '4px' }}>Logo Transparente (PNG Logo)</label>
+                  <label style={{ display: 'block', fontSize: '12px', color: 'rgba(255,255,255,0.5)', marginBottom: '4px' }}>Logo PNG Transparente</label>
                   <input
                     value={logoUrl}
                     onChange={(e) => setLogoUrl(e.target.value)}
                     placeholder="https://.../logo.png"
+                    style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', backgroundColor: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#E2E8F0', fontSize: '13px' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', color: 'rgba(255,255,255,0.5)', marginBottom: '4px' }}>Ícono Juego (32x32 / Mini)</label>
+                  <input
+                    value={iconUrl}
+                    onChange={(e) => setIconUrl(e.target.value)}
+                    placeholder="https://.../icon.png"
                     style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', backgroundColor: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#E2E8F0', fontSize: '13px' }}
                   />
                 </div>
