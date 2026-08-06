@@ -43,13 +43,42 @@ export interface LaunchFailedMessage {
   error: string;
 }
 
+export interface SavegameBackupResultMessage {
+  type: 'SAVEGAME_BACKUP_RESULT';
+  gameKey: string;
+  success: boolean;
+  message: string;
+  sizeBytes: number;
+  timestamp: string;
+  uploadedToCloud: boolean;
+}
+
+export interface SavegameRestoreResultMessage {
+  type: 'SAVEGAME_RESTORE_RESULT';
+  gameKey: string;
+  success: boolean;
+  message: string;
+}
+
+export interface SavegameInfoResultMessage {
+  type: 'SAVEGAME_INFO_RESULT';
+  gameKey: string;
+  exists: boolean;
+  sizeBytes: number;
+  updatedAt: string;
+  resolvedPath: string;
+}
+
 export type WebViewMessage =
   | DownloadProgressMessage
   | DownloadCompletedMessage
   | DownloadFailedMessage
   | GameStartedMessage
   | GameExitedMessage
-  | LaunchFailedMessage;
+  | LaunchFailedMessage
+  | SavegameBackupResultMessage
+  | SavegameRestoreResultMessage
+  | SavegameInfoResultMessage;
 
 // ── Send commands to C# backend ──────────────────────────────
 
@@ -73,6 +102,10 @@ export const minimizeWindow = () => sendCommand('MINIMIZE_WINDOW');
 export const maximizeWindow = () => sendCommand('MAXIMIZE_WINDOW');
 export const closeWindow    = () => sendCommand('CLOSE_WINDOW');
 export const dragWindow     = () => sendCommand('DRAG_WINDOW');
+
+export const backupSavegame  = (gameTitle: string, gameKey: string, savePattern: string) => sendCommand('BACKUP_SAVEGAME', { gameTitle, gameKey, savePattern });
+export const restoreSavegame = (gameTitle: string, gameKey: string, savePattern: string) => sendCommand('RESTORE_SAVEGAME', { gameTitle, gameKey, savePattern });
+export const getSavegameInfo = (gameKey: string, savePattern: string) => sendCommand('GET_SAVEGAME_INFO', { gameKey, savePattern });
 
 // ── Listen for messages from C# ──────────────────────────────
 

@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { ArrowLeft, Play, Download, MessageSquare, Gamepad2, Calendar, HardDrive, ChevronDown, Monitor, Clock, Star, Package, Cloud, Settings, Info, Heart, Award, Building2, Megaphone } from 'lucide-react';
-import { Game } from '../data/games';
+import { useState, useEffect } from 'react';
+import { ArrowLeft, Play, Download, MessageSquare, Gamepad2, Calendar, HardDrive, ChevronDown, Monitor, Clock, Star, Package, Cloud, Settings, Info, Heart, Award, Building2, Megaphone, Upload, RefreshCw, X, FolderCheck } from 'lucide-react';
+import { Game, normalizeDlc } from '../data/games';
+import { backupSavegame, restoreSavegame, getSavegameInfo, onWebViewMessage, formatBytes, WebViewMessage } from '../webview-bridge';
 
 interface GameDetailViewProps {
   game: Game;
@@ -18,6 +19,59 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   const [activeScreenshot, setActiveScreenshot] = useState(0);
   const [subTab, setSubTab] = useState<'details' | 'dlcs' | 'mods'>('details');
   const [isScrolled, setIsScrolled] = useState(false);
+
+  const [cloudModalOpen, setCloudModalOpen] = useState(false);
+  const [savegameInfo, setSavegameInfo] = useState<{ exists: boolean; sizeBytes: number; updatedAt: string; resolvedPath: string } | null>(null);
+  const [backingUp, setBackingUp] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [savegameStatusMsg, setSavegameStatusMsg] = useState<string | null>(null);
+
+  const gameKey = game.gameKey || game.title.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const savePattern = game.savePathPattern || `%APPDATA%/${game.title}`;
+
+  useEffect(() => {
+    // Initial fetch of savegame info from C#
+    getSavegameInfo(gameKey, savePattern);
+
+    const unsubscribe = onWebViewMessage((msg: WebViewMessage) => {
+      if (msg.type === 'SAVEGAME_INFO_RESULT' && msg.gameKey === gameKey) {
+        setSavegameInfo({
+          exists: msg.exists,
+          sizeBytes: msg.sizeBytes,
+          updatedAt: msg.updatedAt,
+          resolvedPath: msg.resolvedPath
+        });
+      } else if (msg.type === 'SAVEGAME_BACKUP_RESULT' && msg.gameKey === gameKey) {
+        setBackingUp(false);
+        setSavegameStatusMsg(msg.message);
+        if (msg.success) {
+          setSavegameInfo((prev) => ({
+            exists: true,
+            sizeBytes: msg.sizeBytes,
+            updatedAt: msg.timestamp,
+            resolvedPath: prev?.resolvedPath || ''
+          }));
+        }
+      } else if (msg.type === 'SAVEGAME_RESTORE_RESULT' && msg.gameKey === gameKey) {
+        setRestoring(false);
+        setSavegameStatusMsg(msg.message);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [gameKey, savePattern]);
+
+  const handleBackup = () => {
+    setBackingUp(true);
+    setSavegameStatusMsg('Comprimiendo y respaldando partida en Oracle Cloud...');
+    backupSavegame(game.title, gameKey, savePattern);
+  };
+
+  const handleRestore = () => {
+    setRestoring(true);
+    setSavegameStatusMsg('Descargando y desempacando última partida desde Oracle Cloud...');
+    restoreSavegame(game.title, gameKey, savePattern);
+  };
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     setIsScrolled(e.currentTarget.scrollTop >= 400);
@@ -378,18 +432,34 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
               </button>
             </div>
 
-            {/* Metric 1: Estado Cloud */}
-            <div className="flex items-center gap-2.5">
-              <Cloud size={18} style={{ color: 'rgba(255,255,255,0.5)' }} />
-              <div>
+            {/* Metric 1: Estado Cloud (Interactive Modal Trigger) */}
+            <button
+              onClick={() => setCloudModalOpen(true)}
+              className="flex items-center gap-2.5 px-2.5 py-1 rounded-lg transition-all duration-200 cursor-pointer"
+              style={{
+                backgroundColor: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.08)',
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(99,102,241,0.15)';
+                (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(99,102,241,0.3)';
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.04)';
+                (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.08)';
+              }}
+              title="Abrir gestión de partidas guardadas en la nube"
+            >
+              <Cloud size={18} style={{ color: savegameInfo?.exists ? '#10B981' : '#60A5FA' }} />
+              <div className="text-left">
                 <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '9px', fontWeight: 700, letterSpacing: '0.05em' }}>
                   ESTADO DE CLOUD
                 </div>
                 <div style={{ color: '#E2E8F0', fontSize: '11px', fontWeight: 600 }}>
-                  Actualizado
+                  {savegameInfo?.exists ? 'Sincronizado' : 'Configurar'}
                 </div>
               </div>
-            </div>
+            </button>
 
             {/* Metric 2: Última Sesión */}
             <div className="flex items-center gap-2.5">
@@ -582,34 +652,72 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                   Todos los DLCs listados a continuación están integrados automáticamente en la receta de instalación.
                 </p>
 
-                <div className="space-y-2">
-                  {game.dlcs.map((dlc, idx) => (
-                    <div
-                      key={dlc}
-                      className="flex items-center justify-between p-3.5 rounded-xl transition-colors"
-                      style={{ backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                          style={{ backgroundColor: 'rgba(99,102,241,0.15)', color: '#818CF8' }}
-                        >
-                          <Package size={16} />
-                        </div>
-                        <div>
-                          <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>{dlc}</div>
-                          <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px' }}>Pack oficial #{idx + 1}</div>
-                        </div>
-                      </div>
-
-                      <span
-                        className="px-2 py-0.5 rounded-md"
-                        style={{ backgroundColor: 'rgba(16,185,129,0.15)', color: '#10B981', fontSize: '10px', fontWeight: 700 }}
+                <div className="space-y-3">
+                  {game.dlcs.map((rawDlc, idx) => {
+                    const dlc = normalizeDlc(rawDlc);
+                    return (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-4 rounded-xl transition-all hover:bg-white/[0.06]"
+                        style={{ backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
                       >
-                        Incluido
-                      </span>
-                    </div>
-                  ))}
+                        <div className="flex items-center gap-4 min-w-0 flex-1 pr-4">
+                          {/* DLC Image / Icon */}
+                          <div
+                            className="w-24 h-16 rounded-xl overflow-hidden shrink-0 flex items-center justify-center"
+                            style={{ backgroundColor: '#0A0D14', border: '1px solid rgba(255,255,255,0.1)' }}
+                          >
+                            {dlc.image ? (
+                              <img
+                                src={dlc.image}
+                                alt={dlc.name}
+                                className="w-full h-full object-cover"
+                                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                              />
+                            ) : (
+                              <Package size={22} className="text-indigo-400/60" />
+                            )}
+                          </div>
+
+                          {/* DLC Title & Description */}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <div style={{ color: '#E2E8F0', fontSize: '14px', fontWeight: 700 }}>{dlc.name}</div>
+                              <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px' }}>• Pack #{idx + 1}</span>
+                            </div>
+
+                            {dlc.description ? (
+                              <p
+                                style={{
+                                  color: 'rgba(255,255,255,0.6)',
+                                  fontSize: '12px',
+                                  marginTop: '2px',
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis'
+                                }}
+                              >
+                                {dlc.description}
+                              </p>
+                            ) : (
+                              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px', marginTop: '2px' }}>
+                                Contenido oficial activado en el juego base.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <span
+                          className="px-3 py-1 rounded-lg shrink-0"
+                          style={{ backgroundColor: 'rgba(16,185,129,0.15)', color: '#10B981', fontSize: '11px', fontWeight: 700 }}
+                        >
+                          Incluido
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ) : (
@@ -792,21 +900,24 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                 >
                   <h3 style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600, marginBottom: '10px' }}>DLCs Incluidos</h3>
                   <div className="flex flex-wrap gap-2">
-                    {game.dlcs.map((dlc) => (
-                      <span
-                        key={dlc}
-                        className="px-2.5 py-1 rounded-lg"
-                        style={{
-                          background: 'rgba(99,102,241,0.12)',
-                          border: '1px solid rgba(99,102,241,0.25)',
-                          color: '#A5B4FC',
-                          fontSize: '11px',
-                          fontWeight: 500,
-                        }}
-                      >
-                        {dlc}
-                      </span>
-                    ))}
+                    {game.dlcs.map((rawDlc, idx) => {
+                      const dlc = normalizeDlc(rawDlc);
+                      return (
+                        <span
+                          key={idx}
+                          className="px-2.5 py-1 rounded-lg"
+                          style={{
+                            background: 'rgba(99,102,241,0.12)',
+                            border: '1px solid rgba(99,102,241,0.25)',
+                            color: '#A5B4FC',
+                            fontSize: '11px',
+                            fontWeight: 500,
+                          }}
+                        >
+                          {dlc.name}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
               </>
@@ -964,6 +1075,132 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
           </div>
         </div>
       </div>
+
+      {/* Cloud Saves Modal (Oracle Cloud VPS) */}
+      {cloudModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)' }}>
+          <div
+            className="w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl flex flex-col"
+            style={{ backgroundColor: '#11151F', border: '1px solid rgba(255,255,255,0.12)' }}
+          >
+            {/* Modal Header */}
+            <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', backgroundColor: '#161B26' }}>
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl" style={{ backgroundColor: 'rgba(99,102,241,0.15)', color: '#818CF8' }}>
+                  <Cloud size={20} />
+                </div>
+                <div>
+                  <h3 style={{ color: '#E2E8F0', fontSize: '15px', fontWeight: 700, margin: 0 }}>
+                    Partidas Guardadas (Cloud Saves)
+                  </h3>
+                  <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>
+                    Oracle Cloud Always Free VPS & Respaldo Local
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setCloudModalOpen(false)}
+                className="p-1.5 rounded-lg text-white/40 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5">
+              {/* Game info header in modal */}
+              <div className="flex items-center gap-3.5 p-3 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <img src={game.iconUrl || game.cover} alt={game.title} className="w-12 h-12 rounded-xl object-cover border border-white/10 shadow shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div style={{ color: '#FFF', fontSize: '14px', fontWeight: 700 }} className="truncate">
+                    {game.title}
+                  </div>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-bold" style={{ backgroundColor: savegameInfo?.exists ? 'rgba(16,185,129,0.15)' : 'rgba(245,158,11,0.15)', color: savegameInfo?.exists ? '#10B981' : '#F59E0B' }}>
+                      <Cloud size={11} /> {savegameInfo?.exists ? 'Copia Nube Lista' : 'Sin copia previa'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Savegame info cards */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em' }}>
+                    ÚLTIMO RESPALDO
+                  </div>
+                  <div style={{ color: '#E2E8F0', fontSize: '12px', fontWeight: 600, marginTop: '4px' }}>
+                    {savegameInfo?.updatedAt ? new Date(savegameInfo.updatedAt).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' }) : 'Nunca'}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em' }}>
+                    TAMAÑO COMPRIMIDO
+                  </div>
+                  <div style={{ color: '#E2E8F0', fontSize: '12px', fontWeight: 600, marginTop: '4px' }}>
+                    {savegameInfo?.sizeBytes ? formatBytes(savegameInfo.sizeBytes) : '0 KB'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Resolved folder path */}
+              {savegameInfo?.resolvedPath && (
+                <div className="p-3 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                  <div className="flex items-center gap-1.5" style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', fontWeight: 700, letterSpacing: '0.05em' }}>
+                    <FolderCheck size={12} style={{ color: '#818CF8' }} /> RUTA DETECTADA EN SISTEMA
+                  </div>
+                  <div style={{ color: '#A5B4FC', fontSize: '11px', fontFamily: 'monospace', wordBreak: 'break-all', marginTop: '4px' }}>
+                    {savegameInfo.resolvedPath}
+                  </div>
+                </div>
+              )}
+
+              {/* Status message alert */}
+              {savegameStatusMsg && (
+                <div className="p-3 rounded-xl text-xs font-medium" style={{ backgroundColor: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.3)', color: '#C7D2FE' }}>
+                  {savegameStatusMsg}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div className="p-5 flex items-center justify-end gap-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)', backgroundColor: '#161B26' }}>
+              <button
+                onClick={handleRestore}
+                disabled={restoring || !savegameInfo?.exists}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all duration-200 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: '#FFF',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                }}
+              >
+                <Download size={15} />
+                {restoring ? 'Restaurando...' : 'Restaurar Partida'}
+              </button>
+
+              <button
+                onClick={handleBackup}
+                disabled={backingUp}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl transition-all duration-200 cursor-pointer disabled:opacity-40"
+                style={{
+                  background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
+                  boxShadow: '0 4px 14px rgba(99,102,241,0.35)',
+                  color: '#FFF',
+                  fontSize: '13px',
+                  fontWeight: 800,
+                }}
+              >
+                <Upload size={15} />
+                {backingUp ? 'Respaldando...' : 'Respaldar Ahora'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style>{`
         ::-webkit-scrollbar { width: 4px; }

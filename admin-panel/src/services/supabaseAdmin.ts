@@ -5,6 +5,13 @@ const SUPABASE_ANON_KEY = '';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+export interface DlcItem {
+  id?: string;
+  name: string;
+  image?: string;
+  description?: string;
+}
+
 export interface DbGame {
   id?: string;
   game_key: string;
@@ -20,6 +27,7 @@ export interface DbGame {
   header_banner_url?: string;
   logo_image_url?: string;
   icon_url?: string;
+  save_path_pattern?: string;
   description?: string;
   latest_official_version: string;
   size_bytes: number;
@@ -27,7 +35,7 @@ export interface DbGame {
   executable_relative_path: string;
   is_active: boolean;
   request_count?: number;
-  dlcs?: string[];
+  dlcs?: (string | DlcItem)[];
   controller_support?: boolean;
   requirements?: { min: string; rec: string };
   screenshots?: string[];

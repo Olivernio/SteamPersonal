@@ -31,6 +31,7 @@ export interface SupabaseGame {
   header_banner_url?: string;
   logo_image_url?: string;
   icon_url?: string;
+  save_path_pattern?: string;
   description?: string;
   latest_official_version: string;
   size_bytes: number;
@@ -38,7 +39,7 @@ export interface SupabaseGame {
   executable_relative_path: string;
   is_active: boolean;
   request_count: number;
-  dlcs?: string[];
+  dlcs?: (string | DlcItem)[];
   controller_support?: boolean;
   requirements?: { min: string; rec: string };
   screenshots?: string[];
@@ -131,6 +132,7 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
         executableRelativePath: row.executable_relative_path,
         logoUrl: row.logo_image_url || undefined,
         iconUrl: row.icon_url || undefined,
+        savePathPattern: row.save_path_pattern || undefined,
         recipeSteps: recipeSteps
       };
     });

@@ -5,6 +5,24 @@ export interface SystemRequirements {
   rec: string;
 }
 
+export interface DlcItem {
+  id?: string;
+  name: string;
+  image?: string;
+  description?: string;
+}
+
+export function normalizeDlc(dlc: string | DlcItem): DlcItem {
+  if (typeof dlc === 'string') {
+    return { name: dlc, image: '', description: '' };
+  }
+  return {
+    name: dlc?.name || 'DLC',
+    image: dlc?.image || '',
+    description: dlc?.description || ''
+  };
+}
+
 export interface Game {
   id: number;
   uuid?: string;
@@ -25,7 +43,7 @@ export interface Game {
   requirements: SystemRequirements;
   changelog: { version: string; date: string; notes: string[] }[];
   requestCount: number;
-  dlcs: string[];
+  dlcs: (string | DlcItem)[];
   controllerSupport: boolean;
   size: string;
   downloadUrl?: string;
@@ -34,6 +52,7 @@ export interface Game {
   iconUrl?: string;
   developerLogoUrl?: string;
   publisherLogoUrl?: string;
+  savePathPattern?: string;
   recipeSteps?: any[];
 }
 

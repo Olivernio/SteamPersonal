@@ -114,7 +114,14 @@ ALTER TABLE public.games
 ADD COLUMN IF NOT EXISTS developer_logo_url TEXT,
 ADD COLUMN IF NOT EXISTS publisher_logo_url TEXT,
 ADD COLUMN IF NOT EXISTS icon_url TEXT,
+ADD COLUMN IF NOT EXISTS save_path_pattern TEXT,
 ADD COLUMN IF NOT EXISTS dlcs JSONB NOT NULL DEFAULT '[]'::jsonb,
 ADD COLUMN IF NOT EXISTS controller_support BOOLEAN NOT NULL DEFAULT true,
 ADD COLUMN IF NOT EXISTS requirements JSONB NOT NULL DEFAULT '{"min": "OS: Windows 10 64-bit | RAM: 8 GB", "rec": "OS: Windows 11 64-bit | RAM: 16 GB"}'::jsonb,
 ADD COLUMN IF NOT EXISTS screenshots JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- NOTA: La columna 'dlcs' es de tipo JSONB, por lo que soporta nativamente tanto arrays de cadenas simples:
+-- ["DLC 1", "DLC 2"]
+-- como objetos estructurados completos con imagen y descripción:
+-- [{"name": "Phantom Liberty", "image": "https://...", "description": "Expansión de historia..."}]
+-- No requiere ejecutar ningún comando ALTER adicional en Supabase.

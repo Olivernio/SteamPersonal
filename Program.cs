@@ -86,6 +86,7 @@ namespace SteamPersonal
         private static GameDownloaderService _downloader = new GameDownloaderService();
         private static GameRecipeService _recipeService = new GameRecipeService(_downloader);
         private static GameLauncherService _launcher = new GameLauncherService();
+        private static SavegameService _savegameService = new SavegameService();
         private static string _currentGameTitle = "Descarga Activa";
 
         [STAThread]
@@ -256,6 +257,55 @@ namespace SteamPersonal
                 else if (action == "CANCEL_DOWNLOAD")
                 {
                     _downloader.Cancel();
+                }
+                else if (action == "BACKUP_SAVEGAME")
+                {
+                    string gameTitle = root.GetProperty("gameTitle").GetString() ?? "";
+                    string gameKey = root.GetProperty("gameKey").GetString() ?? "";
+                    string savePattern = root.GetProperty("savePattern").GetString() ?? "";
+
+                    var res = await _savegameService.BackupSavegameAsync(gameTitle, gameKey, savePattern);
+                    SendToFrontend(new
+                    {
+                        type = "SAVEGAME_BACKUP_RESULT",
+                        gameKey,
+                        success = res.Success,
+                        message = res.Message,
+                        sizeBytes = res.SizeBytes,
+                        timestamp = res.Timestamp.ToString("o"),
+                        uploadedToCloud = res.UploadedToCloud
+                    });
+                }
+                else if (action == "RESTORE_SAVEGAME")
+                {
+                    string gameTitle = root.GetProperty("gameTitle").GetString() ?? "";
+                    string gameKey = root.GetProperty("gameKey").GetString() ?? "";
+                    string savePattern = root.GetProperty("savePattern").GetString() ?? "";
+
+                    bool success = await _savegameService.RestoreSavegameAsync(gameTitle, gameKey, savePattern);
+                    SendToFrontend(new
+                    {
+                        type = "SAVEGAME_RESTORE_RESULT",
+                        gameKey,
+                        success,
+                        message = success ? "Partida guardada restaurada con éxito desde Oracle Cloud." : "Error al restaurar partida guardada."
+                    });
+                }
+                else if (action == "GET_SAVEGAME_INFO")
+                {
+                    string gameKey = root.GetProperty("gameKey").GetString() ?? "";
+                    string savePattern = root.GetProperty("savePattern").GetString() ?? "";
+
+                    var info = await _savegameService.GetSavegameInfoAsync(gameKey, savePattern);
+                    SendToFrontend(new
+                    {
+                        type = "SAVEGAME_INFO_RESULT",
+                        gameKey,
+                        exists = info.Exists,
+                        sizeBytes = info.SizeBytes,
+                        updatedAt = info.UpdatedAt.ToString("o"),
+                        resolvedPath = info.LocalPathResolved
+                    });
                 }
             }
             catch (Exception ex)
