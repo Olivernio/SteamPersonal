@@ -39,6 +39,7 @@ export interface SupabaseGame {
   executable_relative_path: string;
   is_active: boolean;
   request_count: number;
+  available_versions?: { version: string; url: string; notes?: string; releaseDate?: string }[];
   dlcs?: (string | DlcItem)[];
   controller_support?: boolean;
   requirements?: { min: string; rec: string };
@@ -130,6 +131,10 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
         size: sizeMB,
         downloadUrl: row.download_url,
         executableRelativePath: row.executable_relative_path,
+        steamAppId: row.steam_appid || undefined,
+        availableVersions: Array.isArray(row.available_versions) && row.available_versions.length > 0
+          ? row.available_versions
+          : [{ version: row.latest_official_version || 'v1.0', url: row.download_url }],
         logoUrl: row.logo_image_url || undefined,
         iconUrl: row.icon_url || undefined,
         savePathPattern: row.save_path_pattern || undefined,
@@ -139,5 +144,48 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
   } catch (err) {
     console.error('Exception connecting to Supabase:', err);
     return GAMES;
+  }
+}
+
+export async function requestGameUpdate(gameUuid: string, currentCount: number = 0): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('games')
+      .update({ request_count: currentCount + 1 })
+      .eq('id', gameUuid);
+
+    if (error) {
+      console.error('Error requesting update from Supabase:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Exception requesting update:', err);
+    return false;
+  }
+}
+
+export async function requestSpecificVersion(
+  gameUuid: string,
+  versionRequested: string,
+  customMessage: string
+): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('version_requests')
+      .insert({
+        game_id: gameUuid,
+        version_requested: versionRequested,
+        custom_message: customMessage
+      });
+
+    if (error) {
+      console.error('Error requesting specific version from Supabase:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('Exception requesting specific version:', err);
+    return false;
   }
 }

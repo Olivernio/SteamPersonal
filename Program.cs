@@ -257,7 +257,8 @@ namespace SteamPersonal
                         type = "SETTINGS_LOADED",
                         settings = new
                         {
-                            steamApiKey = settings.SteamApiKey
+                            steamApiKey = settings.SteamApiKey,
+                            showBuildId = settings.ShowBuildId
                         }
                     });
                 }
@@ -269,6 +270,14 @@ namespace SteamPersonal
                         if (settingsProp.TryGetProperty("steamApiKey", out var keyProp))
                         {
                             settings.SteamApiKey = keyProp.GetString() ?? "";
+                        }
+                        if (settingsProp.TryGetProperty("showBuildId", out var showBuildProp) && showBuildProp.ValueKind == System.Text.Json.JsonValueKind.True)
+                        {
+                            settings.ShowBuildId = true;
+                        }
+                        else
+                        {
+                            settings.ShowBuildId = false;
                         }
                         SteamPersonal.Services.SettingsManager.Save(settings);
                     }

@@ -125,3 +125,39 @@ ADD COLUMN IF NOT EXISTS screenshots JSONB NOT NULL DEFAULT '[]'::jsonb;
 -- como objetos estructurados completos con imagen y descripción:
 -- [{"name": "Phantom Liberty", "image": "https://...", "description": "Expansión de historia..."}]
 -- No requiere ejecutar ningún comando ALTER adicional en Supabase.
+
+-- Agregar columnas para versiones múltiples e historial de parches (Changelog)
+ALTER TABLE public.games 
+ADD COLUMN IF NOT EXISTS available_versions JSONB NOT NULL DEFAULT '[]'::jsonb,
+ADD COLUMN IF NOT EXISTS changelog JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+-- Permitir a usuarios anónimos (clientes de la app) incrementar el contador de peticiones de actualización
+CREATE POLICY "Permitir a usuarios solicitar actualizacion de juego"
+ON public.games FOR UPDATE
+TO anon, authenticated
+USING (true)
+WITH CHECK (true);
+
+-- Tabla para almacenar solicitudes de versiones específicas con mensajes de usuarios
+CREATE TABLE IF NOT EXISTS public.version_requests (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    game_id UUID REFERENCES public.games(id) ON DELETE CASCADE,
+    version_requested TEXT NOT NULL,
+    custom_message TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Habilitar RLS en version_requests
+ALTER TABLE public.version_requests ENABLE ROW LEVEL SECURITY;
+
+-- Permitir a cualquiera insertar una solicitud de versión
+CREATE POLICY "Permitir a usuarios solicitar version de juego"
+ON public.version_requests FOR INSERT
+TO anon, authenticated
+WITH CHECK (true);
+
+-- Permitir a administradores ver todas las solicitudes
+CREATE POLICY "Permitir a autenticados ver solicitudes de version"
+ON public.version_requests FOR SELECT
+TO authenticated
+USING (true);

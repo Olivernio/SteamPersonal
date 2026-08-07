@@ -106,6 +106,7 @@ export function SettingsView() {
   });
 
   const [steamApiKey, setSteamApiKey] = useState('');
+  const [showBuildId, setShowBuildId] = useState(false);
 
   // Escuchar mensaje SETTINGS_LOADED desde el backend
   React.useEffect(() => {
@@ -113,6 +114,7 @@ export function SettingsView() {
       const msg = event.data;
       if (msg && msg.type === "SETTINGS_LOADED") {
         setSteamApiKey(msg.settings?.steamApiKey || '');
+        setShowBuildId(msg.settings?.showBuildId || false);
       }
     };
 
@@ -133,7 +135,8 @@ export function SettingsView() {
       window.chrome.webview.postMessage({
         action: "SAVE_SETTINGS",
         settings: {
-          steamApiKey: steamApiKey
+          steamApiKey: steamApiKey,
+          showBuildId: showBuildId
         }
       });
       alert("Ajustes guardados correctamente");
@@ -197,6 +200,18 @@ export function SettingsView() {
           </SettingRow>
           <SettingRow icon={Bell} label="Notificaciones" description="Alertas de actualizaciones y descargas completadas" iconColor="#F59E0B">
             <Toggle value={settings.notifications} onChange={() => toggle('notifications')} />
+          </SettingRow>
+          <SettingRow icon={Server} label="Mostrar IDs de Build" description="Mostrar números de Build junto a la versión en detalles del juego" iconColor="#A855F7">
+            <Toggle value={showBuildId} onChange={() => {
+              const newVal = !showBuildId;
+              setShowBuildId(newVal);
+              if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({
+                  action: "SAVE_SETTINGS",
+                  settings: { steamApiKey: steamApiKey, showBuildId: newVal }
+                });
+              }
+            }} />
           </SettingRow>
         </Section>
 

@@ -52,6 +52,8 @@ export interface Game {
   iconUrl?: string;
   developerLogoUrl?: string;
   publisherLogoUrl?: string;
+  steamAppId?: number;
+  availableVersions?: { version: string; url: string; notes?: string; releaseDate?: string }[];
   savePathPattern?: string;
   recipeSteps?: any[];
 }

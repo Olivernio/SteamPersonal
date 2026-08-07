@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, Play, Download, MessageSquare, Gamepad2, Calendar, HardDrive, ChevronDown, Monitor, Clock, Star, Package, Cloud, Settings, Info, Heart, Award, Building2, Megaphone, Upload, RefreshCw, X, FolderCheck } from 'lucide-react';
 import { Game, normalizeDlc } from '../data/games';
 import { backupSavegame, restoreSavegame, getSavegameInfo, getAchievements, onWebViewMessage, formatBytes, WebViewMessage } from '../webview-bridge';
+import { requestGameUpdate, requestSpecificVersion } from '../services/supabaseClient';
 
 interface GameDetailViewProps {
   game: Game;
@@ -17,7 +18,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   const [requestSent, setRequestSent] = useState(false);
   const [requestCount, setRequestCount] = useState(game.requestCount);
   const [activeScreenshot, setActiveScreenshot] = useState(0);
-  const [subTab, setSubTab] = useState<'details' | 'dlcs' | 'achievements' | 'mods'>('details');
+  const [subTab, setSubTab] = useState<'details' | 'dlcs' | 'achievements' | 'mods' | 'versions'>('details');
   const [isScrolled, setIsScrolled] = useState(false);
 
   const [cloudModalOpen, setCloudModalOpen] = useState(false);
@@ -25,6 +26,14 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   const [backingUp, setBackingUp] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [savegameStatusMsg, setSavegameStatusMsg] = useState<string | null>(null);
+
+  const [requestModalOpen, setRequestModalOpen] = useState(false);
+  const [requestVersionTarget, setRequestVersionTarget] = useState<string>('');
+  const [requestCustomMessage, setRequestCustomMessage] = useState<string>('');
+  const [submittingVersionReq, setSubmittingVersionReq] = useState(false);
+  const [requestedVersionsMap, setRequestedVersionsMap] = useState<Record<string, boolean>>({});
+
+  const [showBuildId, setShowBuildId] = useState(false);
 
   const [achievementsState, setAchievementsState] = useState<{
     loading: boolean;
@@ -52,12 +61,19 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   const savePattern = game.savePathPattern || `%APPDATA%/${game.title}`;
 
   useEffect(() => {
+    const appIdToUse = game.steamAppId || (game as any).appId || 0;
     // Initial fetch of savegame info and achievements from C#
     getSavegameInfo(gameKey, savePattern);
-    getAchievements(game.appId, gameKey, game.title, undefined, (game as any).gamePath);
+    getAchievements(appIdToUse, gameKey, game.title, undefined, (game as any).gamePath);
+
+    if (window.chrome && window.chrome.webview) {
+      window.chrome.webview.postMessage({ action: "GET_SETTINGS" });
+    }
 
     const unsubscribe = onWebViewMessage((msg: WebViewMessage) => {
-      if (msg.type === 'ACHIEVEMENTS_DATA_RESULT' && (msg.gameKey === gameKey || msg.appId === game.appId)) {
+      if (msg.type === 'SETTINGS_LOADED') {
+        setShowBuildId(msg.settings?.showBuildId || false);
+      } else if (msg.type === 'ACHIEVEMENTS_DATA_RESULT' && (msg.gameKey === gameKey || msg.appId === appIdToUse)) {
         setAchievementsState({
           loading: false,
           found: msg.found,
@@ -122,19 +138,94 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
     setIsScrolled(e.currentTarget.scrollTop >= 400);
   };
 
-  const handleRequestUpdate = () => {
+  const handleRequestUpdate = async () => {
     if (!requestSent) {
       setRequestSent(true);
       setRequestCount((c) => c + 1);
       onRequestUpdate(game.id);
+      if (game.uuid) {
+        await requestGameUpdate(game.uuid, requestCount);
+      }
     }
   };
 
-  const versions = [
-    { label: `${game.currentVersion} (Instalada)`, value: game.currentVersion },
-    { label: `${game.latestVersion} (Más reciente)`, value: game.latestVersion },
-    { label: 'v2.0 (Legado)', value: 'v2.0' },
-  ];
+  const handleSendVersionRequest = async () => {
+    if (!requestVersionTarget || !game.uuid) return;
+    setSubmittingVersionReq(true);
+    const success = await requestSpecificVersion(game.uuid, requestVersionTarget, requestCustomMessage);
+    setSubmittingVersionReq(false);
+    if (success) {
+      setRequestedVersionsMap(prev => ({ ...prev, [requestVersionTarget]: true }));
+      setRequestModalOpen(false);
+      setRequestCustomMessage('');
+    }
+  };
+
+  const availableVersionsList = game.availableVersions && game.availableVersions.length > 0
+    ? game.availableVersions.map(v => {
+        const buildStr = showBuildId && v.notes ? ` (Build ${v.notes})` : '';
+        return {
+          label: `${v.version}${buildStr}${v.releaseDate ? ` - ${v.releaseDate}` : ''}`,
+          value: v.version,
+          url: v.url
+        };
+      })
+    : [
+        { label: `${game.currentVersion} (Instalada)`, value: game.currentVersion, url: game.downloadUrl },
+        { label: `${game.latestVersion} (Servidor)`, value: game.latestVersion, url: game.downloadUrl },
+      ];
+
+  const unifiedVersionsList = (() => {
+    const map = new Map<string, {
+      version: string;
+      date?: string;
+      notes?: string[];
+      downloadUrl?: string;
+      isAvailable: boolean;
+      buildId?: string;
+    }>();
+
+    // Populate historical changelog entries
+    if (game.changelog && game.changelog.length > 0) {
+      game.changelog.forEach(c => {
+        const vKey = c.version.replace(/^(v|Build\s*)/i, '').trim();
+        map.set(vKey, {
+          version: c.version,
+          date: c.date,
+          notes: c.notes,
+          isAvailable: false
+        });
+      });
+    }
+
+    // Merge downloadable versions
+    if (game.availableVersions && game.availableVersions.length > 0) {
+      game.availableVersions.forEach(av => {
+        const vKey = av.version.replace(/^(v|Build\s*)/i, '').trim();
+        const existing = map.get(vKey);
+        map.set(vKey, {
+          version: av.version,
+          date: av.releaseDate || existing?.date,
+          notes: existing?.notes,
+          downloadUrl: av.url,
+          isAvailable: true,
+          buildId: av.notes
+        });
+      });
+    }
+
+    if (map.size === 0) {
+      map.set(game.latestVersion, {
+        version: game.latestVersion,
+        isAvailable: true,
+        downloadUrl: game.downloadUrl
+      });
+    }
+
+    return Array.from(map.values());
+  })();
+
+  const versions = availableVersionsList;
 
   const renderActionPanel = () => {
     if (game.status === 'updated') {
@@ -701,6 +792,41 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
           )}
         </button>
 
+        {/* Tab: Versions */}
+        <button
+          onClick={() => setSubTab('versions')}
+          className="flex items-center gap-2 px-4 py-3 relative transition-colors"
+          style={{
+            color: subTab === 'versions'
+              ? '#FFF'
+              : 'rgba(255,255,255,0.5)',
+            fontSize: '13px',
+            fontWeight: subTab === 'versions' ? 700 : 500,
+            border: 'none',
+            background: 'transparent',
+            outline: 'none',
+          }}
+        >
+          <span>Versiones</span>
+          <span
+            className="px-1.5 py-0.5 rounded-full"
+            style={{
+              backgroundColor: (game.changelog && game.changelog.length > 0) ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.05)',
+              color: (game.changelog && game.changelog.length > 0) ? '#A5B4FC' : 'rgba(255,255,255,0.3)',
+              fontSize: '10px',
+              fontWeight: 700,
+            }}
+          >
+            {game.changelog ? game.changelog.length : 0}
+          </span>
+          {subTab === 'versions' && (
+            <div
+              className="absolute bottom-0 left-0 right-0 h-0.5"
+              style={{ backgroundColor: '#6366F1', boxShadow: '0 0 10px #6366F1' }}
+            />
+          )}
+        </button>
+
         {/* Tab 3: Mods (Próximamente / Off) */}
         <button
           disabled
@@ -894,6 +1020,137 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                   })}
                 </div>
               </div>
+            ) : subTab === 'versions' ? (
+              /* Unified Versions & History Sub-Tab View */
+              <div className="space-y-5">
+                <div
+                  className="p-5 rounded-2xl space-y-4"
+                  style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Package size={16} style={{ color: '#818CF8' }} />
+                      <h3 style={{ color: '#E2E8F0', fontSize: '15px', fontWeight: 700 }}>
+                        Historial y Lista de Versiones Publicadas
+                      </h3>
+                    </div>
+                    <span
+                      className="px-2.5 py-1 rounded-lg text-xs"
+                      style={{ backgroundColor: 'rgba(99,102,241,0.15)', color: '#A5B4FC', fontWeight: 600 }}
+                    >
+                      {unifiedVersionsList.length} versión(es) registrada(s)
+                    </span>
+                  </div>
+
+                  <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px' }}>
+                    Consulta el historial completo del juego. Puedes descargar las versiones disponibles o solicitar a los administradores que añadan una versión específica.
+                  </p>
+
+                  <div className="space-y-3.5">
+                    {unifiedVersionsList.map((item, idx) => {
+                      const isRequested = requestedVersionsMap[item.version];
+                      return (
+                        <div
+                          key={idx}
+                          className="p-4 rounded-xl space-y-3 transition-all"
+                          style={{
+                            backgroundColor: item.isAvailable ? 'rgba(99,102,241,0.04)' : 'rgba(255,255,255,0.02)',
+                            border: item.isAvailable ? '1px solid rgba(99,102,241,0.25)' : '1px solid rgba(255,255,255,0.06)'
+                          }}
+                        >
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <div className="flex items-center gap-2.5">
+                              <span
+                                className="px-2.5 py-1 rounded-lg font-bold text-xs"
+                                style={{
+                                  backgroundColor: item.isAvailable ? '#6366F1' : 'rgba(255,255,255,0.1)',
+                                  color: '#FFF'
+                                }}
+                              >
+                                {item.version.startsWith('v') ? item.version : `v${item.version}`}
+                              </span>
+
+                              {item.isAvailable && (
+                                <span
+                                  className="px-2 py-0.5 rounded text-[10px] font-semibold"
+                                  style={{ backgroundColor: 'rgba(16,185,129,0.15)', color: '#10B981' }}
+                                >
+                                  Disponible para Descargar
+                                </span>
+                              )}
+
+                              {item.buildId && showBuildId && (
+                                <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>
+                                  (Build {item.buildId})
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-3">
+                              {item.date && (
+                                <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>
+                                  {item.date}
+                                </span>
+                              )}
+
+                              {item.isAvailable ? (
+                                <button
+                                  onClick={() => {
+                                    setSelectedVersion(item.version);
+                                    onStartDownload?.(game);
+                                  }}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-indigo-600 transition-colors cursor-pointer"
+                                  style={{ backgroundColor: '#6366F1', color: '#FFF' }}
+                                >
+                                  <Download size={13} />
+                                  <span>Descargar</span>
+                                </button>
+                              ) : isRequested ? (
+                                <span
+                                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium"
+                                  style={{ backgroundColor: 'rgba(16,185,129,0.15)', color: '#10B981' }}
+                                >
+                                  <FolderCheck size={13} /> Petición Enviada
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => {
+                                    setRequestVersionTarget(item.version);
+                                    setRequestModalOpen(true);
+                                  }}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer hover:bg-amber-500/20"
+                                  style={{
+                                    backgroundColor: 'rgba(245,158,11,0.12)',
+                                    color: '#FBBF24',
+                                    border: '1px solid rgba(245,158,11,0.3)'
+                                  }}
+                                >
+                                  <MessageSquare size={13} />
+                                  <span>Solicitar Versión</span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Notes if available */}
+                          {item.notes && item.notes.length > 0 && (
+                            <ul className="space-y-1 pl-1 pt-1 border-t border-white/5">
+                              {item.notes.map((note, noteIdx) => (
+                                <li key={noteIdx} className="flex items-start gap-2">
+                                  <div className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: item.isAvailable ? '#818CF8' : 'rgba(255,255,255,0.3)' }} />
+                                  <span style={{ color: 'rgba(255,255,255,0.65)', fontSize: '12px', lineHeight: 1.5 }}>
+                                    {note}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
             ) : (
               /* Details Sub-Tab View (Default) */
               <>
@@ -1066,106 +1323,122 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                     </div>
                   ))}
                 </div>
+
+                {/* System Requirements */}
+                <div
+                  className="p-4 rounded-2xl"
+                  style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <Monitor size={14} style={{ color: '#818CF8' }} />
+                    <h3 style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>Requisitos del Sistema</h3>
+                  </div>
+                  <div className="space-y-3">
+                    <div>
+                      <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', fontWeight: 600, marginBottom: '4px', letterSpacing: '0.05em' }}>MÍNIMOS</div>
+                      <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '11px', lineHeight: 1.7 }}>{game.requirements.min}</p>
+                    </div>
+                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
+                      <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', fontWeight: 600, marginBottom: '4px', letterSpacing: '0.05em' }}>RECOMENDADOS</div>
+                      <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '11px', lineHeight: 1.7 }}>{game.requirements.rec}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Screenshots */}
+                <div
+                  className="p-4 rounded-2xl"
+                  style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
+                >
+                  <h3 style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600, marginBottom: '12px' }}>Capturas de Pantalla</h3>
+                  <div className="relative rounded-xl overflow-hidden mb-2" style={{ aspectRatio: '16/9' }}>
+                    <img
+                      src={game.screenshots[activeScreenshot]}
+                      alt="screenshot"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    {game.screenshots.map((ss, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setActiveScreenshot(i)}
+                        className="rounded-lg overflow-hidden transition-all duration-200"
+                        style={{
+                          width: '80px',
+                          aspectRatio: '16/9',
+                          border: i === activeScreenshot ? '2px solid #6366F1' : '2px solid transparent',
+                          opacity: i === activeScreenshot ? 1 : 0.5,
+                        }}
+                      >
+                        <img src={ss} alt={`screenshot-${i}`} className="w-full h-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Changelog / Notas de Parche */}
+                {game.changelog && game.changelog.length > 0 && (
+                  <div
+                    className="p-4 rounded-2xl"
+                    style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
+                  >
+                    <div className="flex items-center gap-2 mb-3">
+                      <Star size={14} style={{ color: '#818CF8' }} />
+                      <h3 style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>Notas de Parche</h3>
+                    </div>
+                    <div className="space-y-4">
+                      {game.changelog.map((entry) => (
+                        <div key={entry.version}>
+                          <div className="flex items-center gap-2 mb-2">
+                            <span
+                              className="px-2 py-0.5 rounded-md"
+                              style={{ background: 'rgba(99,102,241,0.2)', color: '#A5B4FC', fontSize: '11px', fontWeight: 700 }}
+                            >
+                              {entry.version}
+                            </span>
+                            <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px' }}>{entry.date}</span>
+                          </div>
+                          <ul className="space-y-1.5 pl-3">
+                            {entry.notes.map((note, i) => (
+                              <li key={i} className="flex items-start gap-2">
+                                <div className="w-1 h-1 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: '#6366F1' }} />
+                                <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: '12px' }}>{note}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </>
             )}
-
-            {/* System Requirements */}
-            <div
-              className="p-4 rounded-2xl"
-              style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
-            >
-              <div className="flex items-center gap-2 mb-3">
-                <Monitor size={14} style={{ color: '#818CF8' }} />
-                <h3 style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>Requisitos del Sistema</h3>
-              </div>
-              <div className="space-y-3">
-                <div>
-                  <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', fontWeight: 600, marginBottom: '4px', letterSpacing: '0.05em' }}>MÍNIMOS</div>
-                  <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '11px', lineHeight: 1.7 }}>{game.requirements.min}</p>
-                </div>
-                <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
-                  <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', fontWeight: 600, marginBottom: '4px', letterSpacing: '0.05em' }}>RECOMENDADOS</div>
-                  <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: '11px', lineHeight: 1.7 }}>{game.requirements.rec}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Screenshots */}
-            <div
-              className="p-4 rounded-2xl"
-              style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
-            >
-              <h3 style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600, marginBottom: '12px' }}>Capturas de Pantalla</h3>
-              <div className="relative rounded-xl overflow-hidden mb-2" style={{ aspectRatio: '16/9' }}>
-                <img
-                  src={game.screenshots[activeScreenshot]}
-                  alt="screenshot"
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <div className="flex gap-2">
-                {game.screenshots.map((ss, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setActiveScreenshot(i)}
-                    className="rounded-lg overflow-hidden transition-all duration-200"
-                    style={{
-                      width: '80px',
-                      aspectRatio: '16/9',
-                      border: i === activeScreenshot ? '2px solid #6366F1' : '2px solid transparent',
-                      opacity: i === activeScreenshot ? 1 : 0.5,
-                    }}
-                  >
-                    <img src={ss} alt={`screenshot-${i}`} className="w-full h-full object-cover" />
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Changelog */}
-            <div
-              className="p-4 rounded-2xl"
-              style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
-            >
-              <div className="flex items-center gap-2 mb-3">
-                <Star size={14} style={{ color: '#818CF8' }} />
-                <h3 style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>Notas de Parche</h3>
-              </div>
-              <div className="space-y-4">
-                {game.changelog.map((entry) => (
-                  <div key={entry.version}>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span
-                        className="px-2 py-0.5 rounded-md"
-                        style={{ background: 'rgba(99,102,241,0.2)', color: '#A5B4FC', fontSize: '11px', fontWeight: 700 }}
-                      >
-                        {entry.version}
-                      </span>
-                      <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px' }}>{entry.date}</span>
-                    </div>
-                    <ul className="space-y-1.5 pl-3">
-                      {entry.notes.map((note, i) => (
-                        <li key={i} className="flex items-start gap-2">
-                          <div className="w-1 h-1 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: '#6366F1' }} />
-                          <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: '12px' }}>{note}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
 
           {/* Right panel - actions */}
           <div className="w-72 shrink-0 space-y-4">
-            {/* Version selector */}
+            {/* Version status & official steam build */}
             <div
-              className="p-4 rounded-2xl"
+              className="p-4 rounded-2xl space-y-3"
               style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
             >
-              <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', fontWeight: 600, letterSpacing: '0.05em', display: 'block', marginBottom: '8px' }}>
-                VERSIÓN SELECCIONADA
+              <div className="flex items-center justify-between">
+                <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', fontWeight: 600, letterSpacing: '0.05em' }}>
+                  ESTADO DE VERSIÓN
+                </span>
+                <RefreshCw size={12} className="text-gray-500" />
+              </div>
+
+              <div className="p-2.5 rounded-xl flex flex-col gap-1" style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px' }}>Última Versión Oficial</span>
+                <span style={{ color: '#E2E8F0', fontSize: '12px', fontWeight: 600 }}>
+                  {game.latestVersion || 'No disponible'}
+                </span>
+              </div>
+
+              <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', fontWeight: 600, letterSpacing: '0.05em', display: 'block', marginTop: '12px', marginBottom: '4px' }}>
+                SELECCIONAR PARA DESCARGAR
               </label>
               <div className="relative">
                 <button
@@ -1209,6 +1482,22 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                   </div>
                 )}
               </div>
+
+              {/* Botón de solicitar actualización a Admins */}
+              <button
+                onClick={handleRequestUpdate}
+                disabled={requestSent}
+                className="w-full mt-3 flex items-center justify-center gap-2 py-2 px-3 rounded-xl transition-all text-xs font-semibold"
+                style={{
+                  backgroundColor: requestSent ? 'rgba(16, 185, 129, 0.15)' : 'rgba(99,102,241,0.12)',
+                  border: requestSent ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(99,102,241,0.25)',
+                  color: requestSent ? '#34D399' : '#818CF8',
+                  cursor: requestSent ? 'default' : 'pointer'
+                }}
+              >
+                <Megaphone size={13} />
+                {requestSent ? `Petición enviada (${requestCount})` : `Solicitar Actualización (${requestCount})`}
+              </button>
             </div>
 
             {/* Action panel */}
@@ -1342,6 +1631,86 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
               >
                 <Upload size={15} />
                 {backingUp ? 'Respaldando...' : 'Respaldar Ahora'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal para solicitar versión específica */}
+      {requestModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)' }}>
+          <div
+            className="w-full max-w-md rounded-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200"
+            style={{ backgroundColor: '#11151E', border: '1px solid rgba(255,255,255,0.1)' }}
+          >
+            {/* Modal Header */}
+            <div className="p-5 flex items-center justify-between" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', backgroundColor: '#161B26' }}>
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl" style={{ backgroundColor: 'rgba(245,158,11,0.15)', color: '#FBBF24' }}>
+                  <MessageSquare size={18} />
+                </div>
+                <div>
+                  <h3 style={{ color: '#E2E8F0', fontSize: '15px', fontWeight: 700 }}>
+                    Solicitar Versión {requestVersionTarget}
+                  </h3>
+                  <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>
+                    {game.title}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setRequestModalOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4">
+              <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '12px', lineHeight: 1.6 }}>
+                ¿Tienes sugerencias o un enlace donde conseguir los archivos de esta versión? Envía una nota a los administradores:
+              </p>
+
+              <div>
+                <textarea
+                  value={requestCustomMessage}
+                  onChange={(e) => setRequestCustomMessage(e.target.value)}
+                  placeholder="Escribe tu mensaje, sugerencia o enlaces útiles aquí..."
+                  rows={4}
+                  className="w-full p-3 rounded-xl text-xs resize-none outline-none focus:border-indigo-500 transition-colors"
+                  style={{
+                    backgroundColor: 'rgba(0,0,0,0.3)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    color: '#E2E8F0'
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 flex items-center justify-end gap-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.08)', backgroundColor: '#161B26' }}>
+              <button
+                onClick={() => setRequestModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold hover:bg-white/10 transition-colors cursor-pointer"
+                style={{ color: 'rgba(255,255,255,0.7)' }}
+              >
+                Cancelar
+              </button>
+
+              <button
+                onClick={handleSendVersionRequest}
+                disabled={submittingVersionReq}
+                className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                style={{
+                  background: 'linear-gradient(135deg, #F59E0B, #D97706)',
+                  color: '#FFF',
+                  boxShadow: '0 4px 12px rgba(245,158,11,0.3)'
+                }}
+              >
+                {submittingVersionReq ? 'Enviando...' : 'Enviar Petición'}
               </button>
             </div>
           </div>
