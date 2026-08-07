@@ -69,6 +69,39 @@ export interface SavegameInfoResultMessage {
   resolvedPath: string;
 }
 
+export interface AchievementUnlockedMessage {
+  type: 'ACHIEVEMENT_UNLOCKED';
+  gameKey: string;
+  appId: number;
+  achievement: {
+    apiName: string;
+    displayName: string;
+    description: string;
+    iconUrl: string;
+    iconGrayUrl: string;
+    unlocked: boolean;
+    unlockTime?: string;
+  };
+}
+
+export interface AchievementsDataResultMessage {
+  type: 'ACHIEVEMENTS_DATA_RESULT';
+  gameKey: string;
+  appId: number;
+  found: boolean;
+  unlockedCount: number;
+  totalCount: number;
+  achievements: {
+    apiName: string;
+    displayName: string;
+    description: string;
+    iconUrl: string;
+    iconGrayUrl: string;
+    unlocked: boolean;
+    unlockTime?: string;
+  }[];
+}
+
 export type WebViewMessage =
   | DownloadProgressMessage
   | DownloadCompletedMessage
@@ -78,7 +111,9 @@ export type WebViewMessage =
   | LaunchFailedMessage
   | SavegameBackupResultMessage
   | SavegameRestoreResultMessage
-  | SavegameInfoResultMessage;
+  | SavegameInfoResultMessage
+  | AchievementUnlockedMessage
+  | AchievementsDataResultMessage;
 
 // ── Send commands to C# backend ──────────────────────────────
 
@@ -97,6 +132,7 @@ export const launchGame     = (gameTitle: string) => sendCommand('LAUNCH_GAME', 
 export const pauseDownload  = () => sendCommand('PAUSE_DOWNLOAD');
 export const resumeDownload = () => sendCommand('RESUME_DOWNLOAD');
 export const cancelDownload = () => sendCommand('CANCEL_DOWNLOAD');
+export const getAchievements = (appId?: number, gameKey?: string, gameTitle?: string, savePattern?: string, gamePath?: string) => sendCommand('GET_ACHIEVEMENTS', { appId, gameKey, gameTitle, savePattern, gamePath });
 
 export const minimizeWindow = () => sendCommand('MINIMIZE_WINDOW');
 export const maximizeWindow = () => sendCommand('MAXIMIZE_WINDOW');

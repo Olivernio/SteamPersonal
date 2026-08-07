@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -11,6 +11,11 @@
   <ItemGroup>
     <PackageReference Include="SharpCompress" Version="0.50.3" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="CodigoDeApoyo\**" />
+    <None Remove="CodigoDeApoyo\**" />
   </ItemGroup>
 
   <ItemGroup>

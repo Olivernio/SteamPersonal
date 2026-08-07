@@ -6,6 +6,7 @@ import { GameDetailView } from './components/GameDetailView';
 import { DownloadsView, DownloadState } from './components/DownloadsView';
 import { SettingsView } from './components/SettingsView';
 import { ExploreView } from './components/ExploreView';
+import { AchievementToast } from './components/AchievementToast';
 import { Game, GAMES } from './data/games';
 import { fetchGamesFromSupabase } from './services/supabaseClient';
 import { onWebViewMessage, WebViewMessage, startDownload, launchGame } from './webview-bridge';
@@ -246,6 +247,9 @@ export default function App() {
           {renderContent()}
         </main>
       </div>
+
+      {/* Global Steam Achievement Toast Notification */}
+      <AchievementToast />
 
       <style>{`
         * {

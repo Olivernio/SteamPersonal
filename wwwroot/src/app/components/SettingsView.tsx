@@ -105,6 +105,41 @@ export function SettingsView() {
     betaChannel: false,
   });
 
+  const [steamApiKey, setSteamApiKey] = useState('');
+
+  // Escuchar mensaje SETTINGS_LOADED desde el backend
+  React.useEffect(() => {
+    const handleMessage = (event: any) => {
+      const msg = event.data;
+      if (msg && msg.type === "SETTINGS_LOADED") {
+        setSteamApiKey(msg.settings?.steamApiKey || '');
+      }
+    };
+
+    if (window.chrome && window.chrome.webview) {
+      window.chrome.webview.addEventListener('message', handleMessage);
+      window.chrome.webview.postMessage({ action: "GET_SETTINGS" });
+    }
+
+    return () => {
+      if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.removeEventListener('message', handleMessage);
+      }
+    };
+  }, []);
+
+  const handleSaveSettings = () => {
+    if (window.chrome && window.chrome.webview) {
+      window.chrome.webview.postMessage({
+        action: "SAVE_SETTINGS",
+        settings: {
+          steamApiKey: steamApiKey
+        }
+      });
+      alert("Ajustes guardados correctamente");
+    }
+  };
+
   const [downloadPath, setDownloadPath] = useState('C:\\Games\\SteamPersonal');
   const [downloadSpeed, setDownloadSpeed] = useState('Sin límite');
   const [theme, setTheme] = useState('dark');
@@ -126,6 +161,32 @@ export function SettingsView() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <Section title="Conexiones de Red" icon={Server}>
+          <SettingRow
+            icon={Server}
+            label="Clave API de Steam"
+            description="Necesaria para obtener la lista oficial de logros de tus juegos emulados."
+          >
+            <div className="flex gap-2">
+              <input 
+                type="text" 
+                value={steamApiKey}
+                onChange={(e) => setSteamApiKey(e.target.value)}
+                placeholder="Ej. 6A3DB6..."
+                className="px-3 py-1.5 rounded-lg text-xs"
+                style={{ backgroundColor: 'rgba(0,0,0,0.3)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)', width: '220px', outline: 'none' }}
+              />
+              <button 
+                onClick={handleSaveSettings}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-indigo-500 transition-colors"
+                style={{ backgroundColor: '#6366F1', color: '#fff' }}
+              >
+                Guardar
+              </button>
+            </div>
+          </SettingRow>
+        </Section>
+
         {/* General */}
         <Section title="General" icon={Monitor}>
           <SettingRow icon={Monitor} label="Inicio automático con el sistema" description="Lanzar Steam Personal al iniciar Windows">

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Play, Download, MessageSquare, Gamepad2, Calendar, HardDrive, ChevronDown, Monitor, Clock, Star, Package, Cloud, Settings, Info, Heart, Award, Building2, Megaphone, Upload, RefreshCw, X, FolderCheck } from 'lucide-react';
 import { Game, normalizeDlc } from '../data/games';
-import { backupSavegame, restoreSavegame, getSavegameInfo, onWebViewMessage, formatBytes, WebViewMessage } from '../webview-bridge';
+import { backupSavegame, restoreSavegame, getSavegameInfo, getAchievements, onWebViewMessage, formatBytes, WebViewMessage } from '../webview-bridge';
 
 interface GameDetailViewProps {
   game: Game;
@@ -17,7 +17,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   const [requestSent, setRequestSent] = useState(false);
   const [requestCount, setRequestCount] = useState(game.requestCount);
   const [activeScreenshot, setActiveScreenshot] = useState(0);
-  const [subTab, setSubTab] = useState<'details' | 'dlcs' | 'mods'>('details');
+  const [subTab, setSubTab] = useState<'details' | 'dlcs' | 'achievements' | 'mods'>('details');
   const [isScrolled, setIsScrolled] = useState(false);
 
   const [cloudModalOpen, setCloudModalOpen] = useState(false);
@@ -26,15 +26,60 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   const [restoring, setRestoring] = useState(false);
   const [savegameStatusMsg, setSavegameStatusMsg] = useState<string | null>(null);
 
+  const [achievementsState, setAchievementsState] = useState<{
+    loading: boolean;
+    found: boolean;
+    unlockedCount: number;
+    totalCount: number;
+    list: Array<{
+      apiName: string;
+      displayName: string;
+      description: string;
+      iconUrl: string;
+      iconGrayUrl: string;
+      unlocked: boolean;
+      unlockTime?: string;
+    }>;
+  }>({
+    loading: true,
+    found: false,
+    unlockedCount: 0,
+    totalCount: 0,
+    list: []
+  });
+
   const gameKey = game.gameKey || game.title.toLowerCase().replace(/[^a-z0-9]/g, '');
   const savePattern = game.savePathPattern || `%APPDATA%/${game.title}`;
 
   useEffect(() => {
-    // Initial fetch of savegame info from C#
+    // Initial fetch of savegame info and achievements from C#
     getSavegameInfo(gameKey, savePattern);
+    getAchievements(game.appId, gameKey, game.title, undefined, (game as any).gamePath);
 
     const unsubscribe = onWebViewMessage((msg: WebViewMessage) => {
-      if (msg.type === 'SAVEGAME_INFO_RESULT' && msg.gameKey === gameKey) {
+      if (msg.type === 'ACHIEVEMENTS_DATA_RESULT' && (msg.gameKey === gameKey || msg.appId === game.appId)) {
+        setAchievementsState({
+          loading: false,
+          found: msg.found,
+          unlockedCount: msg.unlockedCount,
+          totalCount: msg.totalCount,
+          list: msg.achievements || []
+        });
+      } else if (msg.type === 'ACHIEVEMENT_UNLOCKED' && (msg.gameKey === gameKey || msg.appId === game.appId)) {
+        setAchievementsState((prev) => {
+          const updatedList = prev.list.map((ach) =>
+            ach.apiName.toLowerCase() === msg.achievement.apiName.toLowerCase()
+              ? { ...ach, unlocked: true, unlockTime: msg.achievement.unlockTime }
+              : ach
+          );
+          const isNewUnlock = !prev.list.some((a) => a.apiName.toLowerCase() === msg.achievement.apiName.toLowerCase() && a.unlocked);
+          return {
+            ...prev,
+            unlockedCount: isNewUnlock ? prev.unlockedCount + 1 : prev.unlockedCount,
+            list: updatedList
+          };
+        });
+      } else if (msg.type === 'SAVEGAME_INFO_RESULT' && msg.gameKey === gameKey) {
         setSavegameInfo({
           exists: msg.exists,
           sizeBytes: msg.sizeBytes,
@@ -59,7 +104,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
     });
 
     return () => unsubscribe();
-  }, [gameKey, savePattern]);
+  }, [gameKey, savePattern, game.appId, game.title]);
 
   const handleBackup = () => {
     setBackingUp(true);
@@ -489,17 +534,35 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
 
             {/* Metric 4: Logros */}
             <div className="flex items-center gap-2.5">
-              <Award size={18} style={{ color: 'rgba(255,255,255,0.5)' }} />
+              <Award size={18} style={{ color: achievementsState.found && achievementsState.totalCount > 0 ? '#F59E0B' : 'rgba(255,255,255,0.4)' }} />
               <div>
                 <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '9px', fontWeight: 700, letterSpacing: '0.05em' }}>
                   LOGROS
                 </div>
-                <div className="flex items-center gap-2">
-                  <span style={{ color: '#E2E8F0', fontSize: '11px', fontWeight: 600 }}>20/101</span>
-                  <div className="w-16 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>
-                    <div className="h-full rounded-full" style={{ width: '20%', backgroundColor: '#60A5FA' }} />
+                {achievementsState.loading ? (
+                  <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', fontWeight: 500 }}>
+                    Buscando...
+                  </span>
+                ) : !achievementsState.found || achievementsState.totalCount === 0 ? (
+                  <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px', fontWeight: 500 }}>
+                    Sin logros
+                  </span>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span style={{ color: '#E2E8F0', fontSize: '11px', fontWeight: 700 }}>
+                      {achievementsState.unlockedCount}/{achievementsState.totalCount}
+                    </span>
+                    <div className="w-16 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.min(100, Math.round((achievementsState.unlockedCount / achievementsState.totalCount) * 100))}%`,
+                          backgroundColor: '#F59E0B'
+                        }}
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
           </div>
@@ -558,7 +621,48 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
           )}
         </button>
 
-        {/* Tab 2: DLCs (Active if game.dlcs.length > 0, else Off) */}
+        {/* Tab 2: Logros */}
+        <button
+          disabled={!achievementsState.found || achievementsState.totalCount === 0}
+          onClick={() => setSubTab('achievements')}
+          className="flex items-center gap-2 px-4 py-3 relative transition-colors"
+          style={{
+            color: (!achievementsState.found || achievementsState.totalCount === 0)
+              ? 'rgba(255,255,255,0.2)'
+              : subTab === 'achievements'
+              ? '#FFF'
+              : 'rgba(255,255,255,0.5)',
+            fontSize: '13px',
+            fontWeight: subTab === 'achievements' ? 700 : 500,
+            cursor: (!achievementsState.found || achievementsState.totalCount === 0) ? 'not-allowed' : 'pointer',
+            border: 'none',
+            background: 'transparent',
+            opacity: (!achievementsState.found || achievementsState.totalCount === 0) ? 0.4 : 1,
+          }}
+        >
+          <span>Logros</span>
+          {achievementsState.found && achievementsState.totalCount > 0 && (
+            <span
+              className="px-1.5 py-0.5 rounded-md text-xs"
+              style={{
+                backgroundColor: 'rgba(245,158,11,0.2)',
+                color: '#FDE047',
+                fontSize: '10px',
+                fontWeight: 700,
+              }}
+            >
+              {achievementsState.unlockedCount}/{achievementsState.totalCount}
+            </span>
+          )}
+          {subTab === 'achievements' && (
+            <div
+              className="absolute bottom-0 left-0 right-0 h-0.5"
+              style={{ backgroundColor: '#F59E0B', boxShadow: '0 0 10px #F59E0B' }}
+            />
+          )}
+        </button>
+
+        {/* Tab 3: DLCs (Active if game.dlcs.length > 0, else Off) */}
         <button
           disabled={game.dlcs.length === 0}
           onClick={() => setSubTab('dlcs')}
@@ -630,7 +734,77 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
         <div className="flex gap-6 p-6">
           {/* Left column - main content */}
           <div className="flex-1 min-w-0 space-y-5">
-            {subTab === 'dlcs' ? (
+            {subTab === 'achievements' ? (
+              /* Achievements Sub-Tab View */
+              <div
+                className="p-5 rounded-2xl space-y-4"
+                style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Award size={22} className="text-amber-400" />
+                    <div>
+                      <h3 style={{ color: '#E2E8F0', fontSize: '15px', fontWeight: 700 }}>
+                        Logros del Juego ({achievementsState.unlockedCount} de {achievementsState.totalCount} conseguidos)
+                      </h3>
+                      <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>
+                        Progreso del juego: {Math.round((achievementsState.unlockedCount / achievementsState.totalCount) * 100)}%
+                      </p>
+                    </div>
+                  </div>
+                  <div className="w-48 h-2 rounded-full overflow-hidden bg-white/10">
+                    <div
+                      className="h-full rounded-full transition-all duration-500 bg-amber-500"
+                      style={{ width: `${Math.round((achievementsState.unlockedCount / achievementsState.totalCount) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[500px] overflow-y-auto pr-2">
+                  {achievementsState.list.map((ach) => (
+                    <div
+                      key={ach.apiName}
+                      className="flex items-center gap-3.5 p-3 rounded-xl transition-all"
+                      style={{
+                        backgroundColor: ach.unlocked ? 'rgba(245, 158, 11, 0.08)' : 'rgba(255,255,255,0.03)',
+                        border: ach.unlocked ? '1px solid rgba(245, 158, 11, 0.3)' : '1px solid rgba(255,255,255,0.06)',
+                        opacity: ach.unlocked ? 1 : 0.65
+                      }}
+                    >
+                      {/* Icon */}
+                      <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 bg-black/40 border border-white/10 flex items-center justify-center">
+                        {ach.unlocked ? (
+                          ach.iconUrl ? (
+                            <img src={ach.iconUrl} alt={ach.displayName} className="w-full h-full object-cover" />
+                          ) : (
+                            <Award className="text-amber-400" size={20} />
+                          )
+                        ) : (
+                          ach.iconGrayUrl ? (
+                            <img src={ach.iconGrayUrl} alt={ach.displayName} className="w-full h-full object-cover grayscale opacity-50" />
+                          ) : (
+                            <Award className="text-slate-500" size={20} />
+                          )
+                        )}
+                      </div>
+
+                      {/* Info */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-bold text-slate-200 truncate">{ach.displayName || ach.apiName}</h4>
+                          {ach.unlocked && (
+                            <span className="text-[10px] text-amber-400 font-bold px-1.5 py-0.5 rounded bg-amber-500/10 shrink-0">
+                              Desbloqueado
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">{ach.description || 'Sin descripción'}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : subTab === 'dlcs' ? (
               /* DLCs Sub-Tab View */
               <div
                 className="p-5 rounded-2xl space-y-4"
@@ -872,7 +1046,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                     { icon: Calendar, label: 'Lanzamiento', value: new Date(game.releaseDate).toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' }) },
                     { icon: HardDrive, label: 'Tamaño', value: game.size },
                     { icon: Clock, label: 'Horas jugadas', value: `${game.hoursPlayed.toFixed(1)} hrs` },
-                    { icon: Package, label: 'DLCs incluidos', value: `${game.dlcs.length} packs` },
+                    { icon: Gamepad2, label: 'Mando', value: game.controllerSupport ? 'Soporte completo' : 'Teclado y ratón' },
                   ].map((item) => (
                     <div
                       key={item.label}
@@ -891,34 +1065,6 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                       </div>
                     </div>
                   ))}
-                </div>
-
-                {/* DLC badges */}
-                <div
-                  className="p-4 rounded-2xl"
-                  style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
-                >
-                  <h3 style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600, marginBottom: '10px' }}>DLCs Incluidos</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {game.dlcs.map((rawDlc, idx) => {
-                      const dlc = normalizeDlc(rawDlc);
-                      return (
-                        <span
-                          key={idx}
-                          className="px-2.5 py-1 rounded-lg"
-                          style={{
-                            background: 'rgba(99,102,241,0.12)',
-                            border: '1px solid rgba(99,102,241,0.25)',
-                            color: '#A5B4FC',
-                            fontSize: '11px',
-                            fontWeight: 500,
-                          }}
-                        >
-                          {dlc.name}
-                        </span>
-                      );
-                    })}
-                  </div>
                 </div>
               </>
             )}

@@ -87,11 +87,13 @@ namespace SteamPersonal
         private static GameRecipeService _recipeService = new GameRecipeService(_downloader);
         private static GameLauncherService _launcher = new GameLauncherService();
         private static SavegameService _savegameService = new SavegameService();
+        private static SteamPersonal.Services.Achievements.AchievementService _achievementService = new SteamPersonal.Services.Achievements.AchievementService();
         private static string _currentGameTitle = "Descarga Activa";
 
         [STAThread]
         static void Main()
         {
+            SteamPersonal.Services.SettingsManager.Load();
             Application.SetHighDpiMode(HighDpiMode.SystemAware);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
@@ -106,81 +108,116 @@ namespace SteamPersonal
             Application.Run(_mainForm);
         }
 
+        private static bool _isWebViewInitialized = false;
+
         private static async Task InitializeWebViewAsync()
         {
-            if (_webView == null) return;
+            if (_webView == null || _isWebViewInitialized) return;
+            _isWebViewInitialized = true;
 
-            // Inicializar el entorno de WebView2
-            await _webView.EnsureCoreWebView2Async();
-
-            // Detectar si el servidor de desarrollo de Vite (npm run dev) está activo
-            if (await IsViteDevServerRunningAsync())
+            try
             {
-                _webView.Source = new Uri("http://localhost:5173");
-            }
-            else
-            {
-                // Si no hay servidor dev, cargar bundle estático empaquetado (dist o wwwroot)
-                string wwwrootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot");
-                string distPath = Path.Combine(wwwrootPath, "dist");
-                string targetFolder = Directory.Exists(distPath) ? distPath : wwwrootPath;
-
-                _webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
-                    "steam.local",
-                    targetFolder,
-                    CoreWebView2HostResourceAccessKind.Allow
-                );
-
-                _webView.Source = new Uri("http://steam.local/index.html");
-            }
-
-            // Escuchar mensajes enviados desde JavaScript en React
-            _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
-
-            // Escuchar eventos del motor de descarga C# y retransmitirlos al Frontend
-            _downloader.ProgressChanged += (s, e) =>
-            {
-                var payload = new
+                if (_webView.CoreWebView2 == null)
                 {
-                    type = "DOWNLOAD_PROGRESS",
-                    progress = e.ProgressPercentage,
-                    downloaded = e.BytesDownloaded,
-                    total = e.TotalBytes,
-                    speed = e.Speed,
-                    file = e.CurrentFile,
-                    status = e.Status,
-                    filesCompleted = e.FilesCompleted,
-                    gameTitle = _currentGameTitle
+                    await _webView.EnsureCoreWebView2Async(null);
+                }
+
+                _webView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
+                _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+
+                // Detectar si el servidor de desarrollo de Vite (npm run dev) está activo
+                if (await IsViteDevServerRunningAsync())
+                {
+                    _webView.CoreWebView2.Navigate("http://localhost:5173");
+                }
+                else
+                {
+                    // Si no hay servidor dev, cargar bundle estático empaquetado (dist o wwwroot)
+                    string wwwrootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "wwwroot");
+                    string distPath = Path.Combine(wwwrootPath, "dist");
+                    string targetFolder = Directory.Exists(distPath) ? distPath : wwwrootPath;
+
+                    _webView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                        "steam.local",
+                        targetFolder,
+                        CoreWebView2HostResourceAccessKind.Allow
+                    );
+
+                    _webView.CoreWebView2.Navigate("http://steam.local/index.html");
+                }
+
+                // Escuchar eventos del motor de descarga C# y retransmitirlos al Frontend
+                _downloader.ProgressChanged += (s, e) =>
+                {
+                    var payload = new
+                    {
+                        type = "DOWNLOAD_PROGRESS",
+                        progress = e.ProgressPercentage,
+                        downloaded = e.BytesDownloaded,
+                        total = e.TotalBytes,
+                        speed = e.Speed,
+                        file = e.CurrentFile,
+                        status = e.Status,
+                        filesCompleted = e.FilesCompleted,
+                        gameTitle = _currentGameTitle
+                    };
+
+                    SendToFrontend(payload);
                 };
 
-                SendToFrontend(payload);
-            };
+                _downloader.DownloadCompleted += (s, dest) =>
+                {
+                    SendToFrontend(new { type = "DOWNLOAD_COMPLETED", destination = dest });
+                };
 
-            _downloader.DownloadCompleted += (s, dest) =>
-            {
-                SendToFrontend(new { type = "DOWNLOAD_COMPLETED", destination = dest });
-            };
+                _downloader.DownloadFailed += (s, ex) =>
+                {
+                    SendToFrontend(new { type = "DOWNLOAD_FAILED", error = ex.Message });
+                };
 
-            _downloader.DownloadFailed += (s, ex) =>
-            {
-                SendToFrontend(new { type = "DOWNLOAD_FAILED", error = ex.Message });
-            };
+                // Escuchar eventos del lanzador de juegos
+                _launcher.GameStarted += (s, gameTitle) =>
+                {
+                    SendToFrontend(new { type = "GAME_STARTED", gameTitle });
+                };
 
-            // Escuchar eventos del lanzador de juegos
-            _launcher.GameStarted += (s, gameTitle) =>
-            {
-                SendToFrontend(new { type = "GAME_STARTED", gameTitle });
-            };
+                _launcher.GameExited += (s, e) =>
+                {
+                    _achievementService.StopMonitoring();
+                    SendToFrontend(new { type = "GAME_EXITED", gameTitle = e.GameTitle, sessionMinutes = e.SessionMinutes });
+                };
 
-            _launcher.GameExited += (s, e) =>
-            {
-                SendToFrontend(new { type = "GAME_EXITED", gameTitle = e.GameTitle, sessionMinutes = e.SessionMinutes });
-            };
+                _launcher.LaunchFailed += (s, err) =>
+                {
+                    _achievementService.StopMonitoring();
+                    SendToFrontend(new { type = "LAUNCH_FAILED", error = err });
+                };
 
-            _launcher.LaunchFailed += (s, err) =>
+                // Escuchar eventos de Logros desbloqueados en tiempo real
+                _achievementService.AchievementUnlocked += (s, e) =>
+                {
+                    SendToFrontend(new
+                    {
+                        type = "ACHIEVEMENT_UNLOCKED",
+                        gameKey = e.GameKey,
+                        appId = e.AppId,
+                        achievement = new
+                        {
+                            apiName = e.Achievement.ApiName,
+                            displayName = e.Achievement.DisplayName,
+                            description = e.Achievement.Description,
+                            iconUrl = e.Achievement.IconUrl,
+                            iconGrayUrl = e.Achievement.IconGrayUrl,
+                            unlocked = e.Achievement.Unlocked,
+                            unlockTime = e.Achievement.UnlockTime?.ToString("o")
+                        }
+                    });
+                };
+            }
+            catch (Exception ex)
             {
-                SendToFrontend(new { type = "LAUNCH_FAILED", error = err });
-            };
+                Console.WriteLine($"[WebView2] Advertencia en inicialización: {ex.Message}");
+            }
         }
 
         // Manejador de comandos desde JavaScript
@@ -212,6 +249,30 @@ namespace SteamPersonal
                 {
                     _mainForm?.Invoke(new Action(() => _mainForm.Close()));
                 }
+                else if (action == "GET_SETTINGS")
+                {
+                    var settings = SteamPersonal.Services.SettingsManager.Current;
+                    SendToFrontend(new
+                    {
+                        type = "SETTINGS_LOADED",
+                        settings = new
+                        {
+                            steamApiKey = settings.SteamApiKey
+                        }
+                    });
+                }
+                else if (action == "SAVE_SETTINGS")
+                {
+                    if (root.TryGetProperty("settings", out var settingsProp))
+                    {
+                        var settings = SteamPersonal.Services.SettingsManager.Current;
+                        if (settingsProp.TryGetProperty("steamApiKey", out var keyProp))
+                        {
+                            settings.SteamApiKey = keyProp.GetString() ?? "";
+                        }
+                        SteamPersonal.Services.SettingsManager.Save(settings);
+                    }
+                }
                 else if (action == "DRAG_WINDOW")
                 {
                     _mainForm?.Invoke(new Action(() =>
@@ -242,9 +303,26 @@ namespace SteamPersonal
                 {
                     string gameTitle = root.GetProperty("gameTitle").GetString() ?? "";
                     string safeTitle = string.Concat(gameTitle.Split(Path.GetInvalidFileNameChars())).Trim();
-                    string gameFolder = Path.Combine(Directory.GetCurrentDirectory(), "Juegos", safeTitle);
+
+                    long appId = root.TryGetProperty("appId", out var appProp) && appProp.TryGetInt64(out long aVal) ? aVal : 0;
+                    string gameKey = root.TryGetProperty("gameKey", out var keyProp) ? keyProp.GetString() ?? "" : "";
+                    string customSavePattern = root.TryGetProperty("savePattern", out var patProp) ? patProp.GetString() ?? "" : "";
+                    string customPath = root.TryGetProperty("gamePath", out var pathProp) ? pathProp.GetString() ?? "" : "";
+
+                    string gameFolder = !string.IsNullOrEmpty(customPath) && Directory.Exists(customPath)
+                        ? customPath
+                        : Path.Combine(Directory.GetCurrentDirectory(), "Juegos", safeTitle);
+
+                    // Auto-detect AppID for Monster Hunter Rise if not explicitly passed
+                    if (appId == 0 && (gameTitle.Contains("Monster Hunter Rise", StringComparison.OrdinalIgnoreCase) || gameKey.Equals("mh_rise", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        appId = 1446780;
+                    }
 
                     _launcher.LaunchGame(gameTitle, gameFolder);
+
+                    // Iniciar monitoreo en tiempo real de logros con Goldberg SteamEmu
+                    _ = _achievementService.StartMonitoringGameAsync(appId, gameKey, "goldberg", customSavePattern, gameFolder);
                 }
                 else if (action == "PAUSE_DOWNLOAD")
                 {
@@ -257,6 +335,41 @@ namespace SteamPersonal
                 else if (action == "CANCEL_DOWNLOAD")
                 {
                     _downloader.Cancel();
+                }
+                else if (action == "GET_ACHIEVEMENTS")
+                {
+                    long appId = root.TryGetProperty("appId", out var appProp) && appProp.TryGetInt64(out long aVal) ? aVal : 0;
+                    string gameKey = root.TryGetProperty("gameKey", out var keyProp) ? keyProp.GetString() ?? "" : "";
+                    string gameTitle = root.TryGetProperty("gameTitle", out var titleProp) ? titleProp.GetString() ?? "" : "";
+                    string customSavePattern = root.TryGetProperty("savePattern", out var patProp) ? patProp.GetString() ?? "" : "";
+                    string customPath = root.TryGetProperty("gamePath", out var pathProp) ? pathProp.GetString() ?? "" : "";
+
+                    if (appId == 0 && (gameTitle.Contains("Monster Hunter Rise", StringComparison.OrdinalIgnoreCase) || gameKey.Equals("mh_rise", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        appId = 1446780;
+                    }
+
+                    var (found, unlockedCount, totalCount, achievements) = await _achievementService.GetGameAchievementsAsync(appId, gameKey, customSavePattern, customPath);
+
+                    SendToFrontend(new
+                    {
+                        type = "ACHIEVEMENTS_DATA_RESULT",
+                        gameKey,
+                        appId,
+                        found,
+                        unlockedCount,
+                        totalCount,
+                        achievements = achievements.Select(a => new
+                        {
+                            apiName = a.ApiName,
+                            displayName = a.DisplayName,
+                            description = a.Description,
+                            iconUrl = a.IconUrl,
+                            iconGrayUrl = a.IconGrayUrl,
+                            unlocked = a.Unlocked,
+                            unlockTime = a.UnlockTime?.ToString("o")
+                        })
+                    });
                 }
                 else if (action == "BACKUP_SAVEGAME")
                 {
