@@ -161,3 +161,38 @@ CREATE POLICY "Permitir a autenticados ver solicitudes de version"
 ON public.version_requests FOR SELECT
 TO authenticated
 USING (true);
+
+-- 1. Eliminar las columnas JSON obsoletas de la tabla 'games'
+ALTER TABLE games
+DROP COLUMN available_versions,
+DROP COLUMN changelog;
+
+-- 2. Crear la nueva tabla relacional 'game_versions'
+CREATE TABLE game_versions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    game_id UUID NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    version_name TEXT NOT NULL,
+    build_id TEXT,
+    release_date DATE,
+    download_url TEXT,
+    is_available BOOLEAN DEFAULT false,
+    changelog_title TEXT,
+    changelog_body TEXT,
+    source TEXT DEFAULT 'steam_event',
+    event_id TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- 3. Crear una restricción única (Unique Constraint)
+-- Esto asegura que no tengamos duplicados del mismo parche (version_name) para el mismo juego.
+-- También es indispensable para poder usar el UPSERT (ON CONFLICT) desde el Worker.
+ALTER TABLE game_versions
+ADD CONSTRAINT uq_game_version UNIQUE (game_id, version_name);
+
+-- 4. Crear políticas RLS (Opcional, si tienes RLS activado)
+-- Si no usas RLS para el panel, puedes ignorar esto. Si sí, el worker usa el service_role key 
+-- que se salta RLS automáticamente, así que no necesitas RLS para que el Worker funcione.
+-- Pero si tu web (app pública) necesita leer, habilítalo:
+ALTER TABLE game_versions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Public can read game versions" ON game_versions FOR SELECT USING (true);

@@ -16,7 +16,9 @@
 
   <ItemGroup>
     <Compile Remove="CodigoDeApoyo\**" />
+    <Compile Remove="SteamPersonal.SyncWorker\**" />
     <None Remove="CodigoDeApoyo\**" />
+    <None Remove="SteamPersonal.SyncWorker\**" />
   </ItemGroup>
 
   <ItemGroup>
