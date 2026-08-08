@@ -57,7 +57,8 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
         *,
         installation_recipes (
           steps
-        )
+        ),
+        game_versions (*)
       `)
       .eq('is_active', true)
       .order('created_at', { ascending: false });
@@ -98,6 +99,60 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
             rec: 'OS: Windows 11 64-bit | RAM: 16 GB | DirectX 12',
           };
 
+      // Proceso de versiones y changelog
+      const versions = Array.isArray(row.game_versions) ? row.game_versions : [];
+      
+      // Ordenar versiones de más nueva a más vieja por fecha
+      versions.sort((a: any, b: any) => {
+        const dateA = a.release_date ? new Date(a.release_date).getTime() : 0;
+        const dateB = b.release_date ? new Date(b.release_date).getTime() : 0;
+        return dateB - dateA;
+      });
+
+      const availableVersions: any[] = [];
+      const changelog: any[] = [];
+
+      versions.forEach((v: any) => {
+        // Filtrar Versiones Técnicas
+        if (v.build_id) {
+          availableVersions.push({
+            version: v.version_name || v.changelog_title || 'Update',
+            url: v.download_url || row.download_url || '',
+            notes: v.build_id,
+            releaseDate: v.release_date ? new Date(v.release_date).toISOString().split('T')[0] : ''
+          });
+        }
+
+        // Filtrar Changelog / Notas de parche
+        if (v.changelog_body || v.changelog_title) {
+          // Remover etiquetas BBCode/HTML simples para que se vea más limpio
+          let cleanBody = v.changelog_body || '';
+          cleanBody = cleanBody.replace(/\[\/?(b|i|u|url|img)\]/gi, '');
+          
+          changelog.push({
+            version: v.version_name || v.changelog_title || 'Update',
+            date: v.release_date ? new Date(v.release_date).toISOString().split('T')[0] : '',
+            notes: [v.changelog_title, ...(cleanBody ? [cleanBody] : [])]
+          });
+        }
+      });
+
+      // Asegurar que siempre haya una versión disponible si es un juego activo
+      if (availableVersions.length === 0) {
+        availableVersions.push({ 
+          version: row.latest_official_version || 'v1.0', 
+          url: row.download_url 
+        });
+      }
+
+      if (changelog.length === 0) {
+        changelog.push({
+          version: row.latest_official_version || 'v1.0',
+          date: new Date().toISOString().split('T')[0],
+          notes: ['Versión oficial del catálogo Supabase'],
+        });
+      }
+
       return {
         id: index + 1, // Unique numeric ID for frontend list keying
         uuid: row.id,
@@ -115,16 +170,10 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
         screenshots,
         status: 'update_available',
         currentVersion: 'v1.0',
-        latestVersion: row.latest_official_version || 'v1.0',
+        latestVersion: availableVersions[0]?.version || row.latest_official_version || 'v1.0',
         hoursPlayed: 0,
         requirements: reqs,
-        changelog: [
-          {
-            version: row.latest_official_version || 'v1.0',
-            date: new Date().toISOString().split('T')[0],
-            notes: ['Versión oficial del catálogo Supabase'],
-          },
-        ],
+        changelog: changelog,
         requestCount: row.request_count || 0,
         dlcs,
         controllerSupport: row.controller_support ?? true,
@@ -132,9 +181,7 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
         downloadUrl: row.download_url,
         executableRelativePath: row.executable_relative_path,
         steamAppId: row.steam_appid || undefined,
-        availableVersions: Array.isArray(row.available_versions) && row.available_versions.length > 0
-          ? row.available_versions
-          : [{ version: row.latest_official_version || 'v1.0', url: row.download_url }],
+        availableVersions: availableVersions,
         logoUrl: row.logo_image_url || undefined,
         iconUrl: row.icon_url || undefined,
         savePathPattern: row.save_path_pattern || undefined,

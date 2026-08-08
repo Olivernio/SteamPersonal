@@ -12,6 +12,37 @@ interface GameDetailViewProps {
   onLaunchGame?: (gameTitle: string) => void;
 }
 
+const ExpandableText = ({ text, lines = 3 }: { text: string, lines?: number }) => {
+  const [expanded, setExpanded] = useState(false);
+  if (!text) return null;
+  if (text.length <= 150) {
+    return <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</div>;
+  }
+  return (
+    <div className="flex flex-col items-start gap-1 w-full">
+      <div 
+        style={{ 
+          display: expanded ? 'block' : '-webkit-box',
+          WebkitLineClamp: expanded ? 'unset' : lines,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word'
+        }}
+      >
+        {text}
+      </div>
+      <button 
+        onClick={() => setExpanded(!expanded)}
+        className="text-xs font-semibold hover:underline mt-1"
+        style={{ color: '#818CF8' }}
+      >
+        {expanded ? 'Mostrar menos' : 'Leer más...'}
+      </button>
+    </div>
+  );
+};
+
 export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload, onLaunchGame }: GameDetailViewProps) {
   const [selectedVersion, setSelectedVersion] = useState(game.currentVersion);
   const [versionOpen, setVersionOpen] = useState(false);
@@ -19,6 +50,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   const [requestCount, setRequestCount] = useState(game.requestCount);
   const [activeScreenshot, setActiveScreenshot] = useState(0);
   const [subTab, setSubTab] = useState<'details' | 'dlcs' | 'achievements' | 'mods' | 'versions'>('details');
+  const [showAllVersions, setShowAllVersions] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
 
   const [cloudModalOpen, setCloudModalOpen] = useState(false);
@@ -185,16 +217,26 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
       buildId?: string;
     }>();
 
-    // Populate historical changelog entries
-    if (game.changelog && game.changelog.length > 0) {
+    // Opcionalmente agregar eventos históricos (noticias) a la lista, pero filtrando publicaciones genéricas
+    if (showAllVersions && game.changelog && game.changelog.length > 0) {
       game.changelog.forEach(c => {
-        const vKey = c.version.replace(/^(v|Build\s*)/i, '').trim();
-        map.set(vKey, {
-          version: c.version,
-          date: c.date,
-          notes: c.notes,
-          isAvailable: false
-        });
+        // Heurística mejorada: solo versiones reales basadas en el nombre de versión o el TÍTULO de la nota.
+        // Evitamos buscar en el cuerpo para no falsos positivos con menciones de otros juegos.
+        const versionRegex = /^(v|build|patch|ver)\.*\s*\d/i;
+        const titleRegex = /(patch notes|release notes|hotfix|update \d|version \d|ver\.*\s*\d|patch \d)/i;
+        
+        const isVersionLike = versionRegex.test(c.version) || 
+                              (c.notes && c.notes.length > 0 && titleRegex.test(c.notes[0]));
+                              
+        if (isVersionLike) {
+          const vKey = c.version.replace(/^(v|Build\s*)/i, '').trim();
+          map.set(vKey, {
+            version: c.version,
+            date: c.date,
+            notes: c.notes,
+            isAvailable: false
+          });
+        }
       });
     }
 
@@ -1034,12 +1076,28 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                         Historial y Lista de Versiones Publicadas
                       </h3>
                     </div>
-                    <span
-                      className="px-2.5 py-1 rounded-lg text-xs"
-                      style={{ backgroundColor: 'rgba(99,102,241,0.15)', color: '#A5B4FC', fontWeight: 600 }}
-                    >
-                      {unifiedVersionsList.length} versión(es) registrada(s)
-                    </span>
+                    <div className="flex items-center gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer" onClick={() => setShowAllVersions(!showAllVersions)}>
+                        <div 
+                          className="w-8 h-4 rounded-full relative transition-colors duration-200"
+                          style={{ backgroundColor: showAllVersions ? '#6366F1' : 'rgba(255,255,255,0.1)' }}
+                        >
+                          <div 
+                            className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all duration-200 shadow-sm"
+                            style={{ left: showAllVersions ? '18px' : '2px' }}
+                          />
+                        </div>
+                        <span style={{ color: showAllVersions ? '#fff' : 'rgba(255,255,255,0.5)', fontSize: '12px', transition: 'color 0.2s', userSelect: 'none' }}>
+                          Mostrar todo el historial
+                        </span>
+                      </label>
+                      <span
+                        className="px-2.5 py-1 rounded-lg text-xs"
+                        style={{ backgroundColor: 'rgba(99,102,241,0.15)', color: '#A5B4FC', fontWeight: 600 }}
+                      >
+                        {unifiedVersionsList.length} versión(es) registrada(s)
+                      </span>
+                    </div>
                   </div>
 
                   <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px' }}>
@@ -1138,9 +1196,9 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                               {item.notes.map((note, noteIdx) => (
                                 <li key={noteIdx} className="flex items-start gap-2">
                                   <div className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: item.isAvailable ? '#818CF8' : 'rgba(255,255,255,0.3)' }} />
-                                  <span style={{ color: 'rgba(255,255,255,0.65)', fontSize: '12px', lineHeight: 1.5 }}>
-                                    {note}
-                                  </span>
+                                  <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: '12px', lineHeight: 1.5, flex: 1, minWidth: 0 }}>
+                                    <ExpandableText text={note} lines={2} />
+                                  </div>
                                 </li>
                               ))}
                             </ul>
@@ -1194,9 +1252,9 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                     <h3 style={{ color: '#E2E8F0', fontSize: '15px', fontWeight: 700 }}>
                       Acerca del Juego
                     </h3>
-                    <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: '13px', lineHeight: 1.7 }}>
-                      {game.description}
-                    </p>
+                    <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: '13px', lineHeight: 1.7, flex: 1, minWidth: 0 }}>
+                      <ExpandableText text={game.description} lines={4} />
+                    </div>
                   </div>
 
                   {/* Right: Developer & Publisher Info Card (No image border, clean horizontal divider) */}
@@ -1403,7 +1461,9 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                             {entry.notes.map((note, i) => (
                               <li key={i} className="flex items-start gap-2">
                                 <div className="w-1 h-1 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: '#6366F1' }} />
-                                <span style={{ color: 'rgba(255,255,255,0.55)', fontSize: '12px' }}>{note}</span>
+                                <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: '12px', flex: 1, minWidth: 0 }}>
+                                  <ExpandableText text={note} lines={2} />
+                                </div>
                               </li>
                             ))}
                           </ul>
