@@ -46,7 +46,7 @@ TO anon, authenticated
 USING (true);
 
 -- 3. Bloquear ESCRITURA/MODIFICACIÓN a usuarios anon (Solo administradores autenticados)
--- Al no crear políticas de INSERT/UPDATE/DELETE para 'anon', PostgreSQL bloquea cualquier intento de hackeo automáticamente.
+-- Al no crear políticas de INSERT/UPDATE/DELETE para 'anon', PostgreSQL bloquea cualquier intento automáticamente.
 
 -- Insertar juego de prueba
 INSERT INTO public.games (game_key, title, steam_appid, developer, genre, download_url, executable_relative_path)
@@ -62,10 +62,10 @@ VALUES (
 
 select * from public.games;
 
--- Insertar su receta asociada (reemplaza {GAME_ID} por el UUID generado arriba)
+-- Insertar su receta asociada usando la subconsulta dinámica
 INSERT INTO public.installation_recipes (game_id, steps)
 VALUES (
-    '8d420973-9fd8-4912-a1b2-c2aa9ee12b0e',
+    (SELECT id FROM public.games WHERE game_key = 'librarian' LIMIT 1),
     '[
         { "action": "stream_extract", "provider": "GoogleDrive" },
         { "action": "add_defender_exclusion", "path": "{INSTALL_DIR}" },
@@ -119,12 +119,6 @@ ADD COLUMN IF NOT EXISTS dlcs JSONB NOT NULL DEFAULT '[]'::jsonb,
 ADD COLUMN IF NOT EXISTS controller_support BOOLEAN NOT NULL DEFAULT true,
 ADD COLUMN IF NOT EXISTS requirements JSONB NOT NULL DEFAULT '{"min": "OS: Windows 10 64-bit | RAM: 8 GB", "rec": "OS: Windows 11 64-bit | RAM: 16 GB"}'::jsonb,
 ADD COLUMN IF NOT EXISTS screenshots JSONB NOT NULL DEFAULT '[]'::jsonb;
-
--- NOTA: La columna 'dlcs' es de tipo JSONB, por lo que soporta nativamente tanto arrays de cadenas simples:
--- ["DLC 1", "DLC 2"]
--- como objetos estructurados completos con imagen y descripción:
--- [{"name": "Phantom Liberty", "image": "https://...", "description": "Expansión de historia..."}]
--- No requiere ejecutar ningún comando ALTER adicional en Supabase.
 
 -- Agregar columnas para versiones múltiples e historial de parches (Changelog)
 ALTER TABLE public.games 
@@ -185,14 +179,9 @@ CREATE TABLE game_versions (
 );
 
 -- 3. Crear una restricción única (Unique Constraint)
--- Esto asegura que no tengamos duplicados del mismo parche (version_name) para el mismo juego.
--- También es indispensable para poder usar el UPSERT (ON CONFLICT) desde el Worker.
 ALTER TABLE game_versions
 ADD CONSTRAINT uq_game_version UNIQUE (game_id, version_name);
 
--- 4. Crear políticas RLS (Opcional, si tienes RLS activado)
--- Si no usas RLS para el panel, puedes ignorar esto. Si sí, el worker usa el service_role key 
--- que se salta RLS automáticamente, así que no necesitas RLS para que el Worker funcione.
--- Pero si tu web (app pública) necesita leer, habilítalo:
+-- 4. Crear políticas RLS para 'game_versions'
 ALTER TABLE game_versions ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Public can read game versions" ON game_versions FOR SELECT USING (true);

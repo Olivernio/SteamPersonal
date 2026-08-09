@@ -2,8 +2,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using SteamPersonal.SyncWorker;
 
-// Cargar variables de entorno desde el archivo .env (si existe)
-DotNetEnv.Env.Load();
+// Cargar variables de entorno buscando en el directorio actual y hacia arriba
+DotNetEnv.Env.TraversePath().Load();
 
 var services = new ServiceCollection();
 services.AddLogging(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
