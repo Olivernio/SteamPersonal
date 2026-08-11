@@ -3,6 +3,7 @@ import { ArrowLeft, Play, Download, MessageSquare, Gamepad2, Calendar, HardDrive
 import { Game } from '../data/games';
 import { backupSavegame, restoreSavegame, getSavegameInfo, getAchievements, onWebViewMessage, formatBytes, WebViewMessage } from '../webview-bridge';
 import { requestGameUpdate, requestSpecificVersion } from '../services/supabaseClient';
+import { DynamicBackground } from './DynamicBackground';
 
 interface GameDetailViewProps {
   game: Game;
@@ -66,6 +67,10 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   const [requestedVersionsMap, setRequestedVersionsMap] = useState<Record<string, boolean>>({});
 
   const [showBuildId, setShowBuildId] = useState(false);
+  const [enableDynamicBackgrounds, setEnableDynamicBackgrounds] = useState(true);
+  const [bgImageDurationMs, setBgImageDurationMs] = useState(10000);
+  const [bgFadeDurationMs, setBgFadeDurationMs] = useState(5000);
+  const [bgSettingsModalOpen, setBgSettingsModalOpen] = useState(false);
 
   const [achievementsState, setAchievementsState] = useState<{
     loading: boolean;
@@ -105,6 +110,9 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
     const unsubscribe = onWebViewMessage((msg: WebViewMessage) => {
       if (msg.type === 'SETTINGS_LOADED') {
         setShowBuildId(msg.settings?.showBuildId || false);
+        setEnableDynamicBackgrounds(msg.settings?.enableDynamicBackgrounds ?? true);
+        setBgImageDurationMs(msg.settings?.bgImageDurationMs ?? 10000);
+        setBgFadeDurationMs(msg.settings?.bgFadeDurationMs ?? 5000);
       } else if (msg.type === 'ACHIEVEMENTS_DATA_RESULT' && (msg.gameKey === gameKey || msg.appId === appIdToUse)) {
         setAchievementsState({
           loading: false,
@@ -270,133 +278,164 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   const versions = availableVersionsList;
 
   const renderActionPanel = () => {
-    if (game.status === 'updated') {
-      return (
-        <div className="space-y-3">
-          <button
-            onClick={() => onLaunchGame?.(game.title)}
-            className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl transition-all duration-200 group"
-            style={{
-              background: 'linear-gradient(135deg, #059669, #10B981)',
-              boxShadow: '0 8px 24px rgba(16,185,129,0.4)',
-              fontSize: '16px',
-              fontWeight: 700,
-              color: '#fff',
-              letterSpacing: '0.05em',
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)'; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
-          >
-            <Play size={20} fill="currentColor" />
-            JUGAR
-          </button>
-          <div
-            className="flex items-center justify-between px-4 py-2.5 rounded-xl"
-            style={{ backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
-          >
-            <div className="flex items-center gap-2" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px' }}>
-              <Clock size={13} />
-              <span>Tiempo jugado</span>
-            </div>
-            <span style={{ color: '#10B981', fontSize: '14px', fontWeight: 700 }}>{game.hoursPlayed.toFixed(1)} hrs</span>
-          </div>
-        </div>
-      );
-    }
-
-    if (game.status === 'update_available') {
-      return (
-        <div className="space-y-3">
-          <button
-            onClick={() => onStartDownload?.(game)}
-            className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl transition-all duration-200"
-            style={{
-              background: 'linear-gradient(135deg, #1D4ED8, #3B82F6)',
-              boxShadow: '0 8px 24px rgba(59,130,246,0.4)',
-              fontSize: '16px',
-              fontWeight: 700,
-              color: '#fff',
-              letterSpacing: '0.04em',
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)'; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
-          >
-            <Download size={20} />
-            ACTUALIZAR A {game.latestVersion}
-          </button>
-          <button
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl"
-            style={{
-              backgroundColor: 'rgba(255,255,255,0.05)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: 'rgba(255,255,255,0.6)',
-              fontSize: '13px',
-              fontWeight: 500,
-            }}
-          >
-            <Play size={14} fill="currentColor" />
-            Jugar versión actual ({game.currentVersion})
-          </button>
-          <div className="flex items-center gap-2 px-3 py-2 rounded-xl"
-            style={{ backgroundColor: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.2)' }}
-          >
-            <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#EAB308' }} />
-            <span style={{ color: 'rgba(234,179,8,0.9)', fontSize: '11px' }}>
-              Nueva versión disponible: {game.latestVersion}
-            </span>
-          </div>
-        </div>
-      );
-    }
-
     return (
-      <div className="space-y-3">
-        <div
-          className="px-4 py-3 rounded-xl"
-          style={{ backgroundColor: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.25)' }}
-        >
-          <div className="flex items-center gap-2 mb-1">
-            <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#F97316' }} />
-            <span style={{ color: '#F97316', fontSize: '12px', fontWeight: 600 }}>
-              Existe la {game.latestVersion} oficial
-            </span>
+      <div className="space-y-4">
+        {/* Main Action Area */}
+        {game.status === 'updated' ? (
+          <div className="space-y-3">
+            <button
+              onClick={() => onLaunchGame?.(game.title)}
+              className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl transition-all duration-200 group"
+              style={{
+                background: 'linear-gradient(135deg, #059669, #10B981)',
+                boxShadow: '0 8px 24px rgba(16,185,129,0.4)',
+                fontSize: '16px',
+                fontWeight: 700,
+                color: '#fff',
+                letterSpacing: '0.05em',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
+            >
+              <Play size={20} fill="currentColor" />
+              JUGAR
+            </button>
           </div>
-          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>
-            El enlace de descarga aún no ha sido subido al servidor.
-          </p>
+        ) : game.status === 'update_available' ? (
+          <div className="space-y-3">
+            <button
+              onClick={() => onStartDownload?.(game)}
+              className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl transition-all duration-200"
+              style={{
+                background: 'linear-gradient(135deg, #1D4ED8, #3B82F6)',
+                boxShadow: '0 8px 24px rgba(59,130,246,0.4)',
+                fontSize: '15px',
+                fontWeight: 700,
+                color: '#fff',
+                letterSpacing: '0.04em',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
+            >
+              <Download size={18} />
+              ACTUALIZAR A {game.latestVersion}
+            </button>
+            <button
+              onClick={() => onLaunchGame?.(game.title)}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl transition-colors hover:bg-white/10"
+              style={{
+                backgroundColor: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                color: 'rgba(255,255,255,0.8)',
+                fontSize: '13px',
+                fontWeight: 600,
+              }}
+            >
+              <Play size={14} fill="currentColor" />
+              Jugar versión instalada
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <button
+              className="w-full flex items-center justify-center gap-3 py-3.5 rounded-2xl transition-all duration-300"
+              style={{
+                background: requestSent
+                  ? 'rgba(99,102,241,0.15)'
+                  : 'linear-gradient(135deg, #4F46E5, #7C3AED)',
+                border: requestSent ? '1px solid rgba(99,102,241,0.3)' : 'none',
+                boxShadow: requestSent ? 'none' : '0 8px 24px rgba(99,102,241,0.35)',
+                fontSize: '14px',
+                fontWeight: 700,
+                color: requestSent ? '#A5B4FC' : '#fff',
+                letterSpacing: '0.03em',
+                cursor: requestSent ? 'default' : 'pointer',
+              }}
+              onClick={handleRequestUpdate}
+              disabled={requestSent}
+            >
+              <MessageSquare size={17} />
+              {requestSent ? '✓ Solicitud enviada' : `📩 SOLICITAR UPDATE`}
+            </button>
+          </div>
+        )}
+
+        <div className="h-px w-full my-4" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }} />
+
+        {/* Versions Info Area */}
+        <div className="space-y-2">
+          <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div>
+              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>Versión Instalada</div>
+              <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>{game.currentVersion || 'Ninguna'}</div>
+            </div>
+            {game.status === 'updated' && (
+               <div className="px-2 py-1 rounded-md" style={{ backgroundColor: 'rgba(16,185,129,0.15)', color: '#10B981', fontSize: '10px', fontWeight: 700 }}>Al Día</div>
+            )}
+            {game.status === 'update_available' && (
+               <div className="px-2 py-1 rounded-md" style={{ backgroundColor: 'rgba(234,179,8,0.15)', color: '#EAB308', fontSize: '10px', fontWeight: 700 }}>Desactualizado</div>
+            )}
+          </div>
+
+          <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div>
+              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>Última de Steam</div>
+              <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>{game.latestVersion || 'No disponible'}</div>
+            </div>
+            <RefreshCw size={12} className="text-gray-500" />
+          </div>
         </div>
-        <button
-          className="w-full flex items-center justify-center gap-3 py-3.5 rounded-2xl transition-all duration-300"
-          style={{
-            background: requestSent
-              ? 'rgba(99,102,241,0.15)'
-              : 'linear-gradient(135deg, #4F46E5, #7C3AED)',
-            border: requestSent ? '1px solid rgba(99,102,241,0.3)' : 'none',
-            boxShadow: requestSent ? 'none' : '0 8px 24px rgba(99,102,241,0.35)',
-            fontSize: '14px',
-            fontWeight: 700,
-            color: requestSent ? '#A5B4FC' : '#fff',
-            letterSpacing: '0.03em',
-            cursor: requestSent ? 'default' : 'pointer',
-          }}
-          onClick={handleRequestUpdate}
-          disabled={requestSent}
-        >
-          <MessageSquare size={17} />
-          {requestSent ? '✓ ¡Solicitud enviada!' : `📩 SOLICITAR UPDATE (${requestCount} peticiones)`}
-        </button>
-        <button
-          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl"
-          style={{
-            backgroundColor: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            color: 'rgba(255,255,255,0.4)',
-            fontSize: '13px',
-          }}
-        >
-          <Play size={13} fill="currentColor" />
-          Jugar versión desactualizada ({game.currentVersion})
-        </button>
+
+        {/* Change Version Dropdown */}
+        <div className="mt-4 pt-2">
+          <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '10px', fontWeight: 600, letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>
+            SELECCIONAR PARA DESCARGAR
+          </label>
+          <div className="relative">
+            <button
+              onClick={() => setVersionOpen(!versionOpen)}
+              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all duration-200"
+              style={{
+                backgroundColor: 'rgba(255,255,255,0.04)',
+                border: versionOpen ? '1px solid rgba(99,102,241,0.5)' : '1px solid rgba(255,255,255,0.08)',
+                color: '#E2E8F0',
+                fontSize: '13px',
+              }}
+            >
+              <span className="truncate pr-2 font-medium">{selectedVersion}</span>
+              <ChevronDown size={14} style={{ color: 'rgba(255,255,255,0.4)', transform: versionOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', flexShrink: 0 }} />
+            </button>
+            {versionOpen && (
+              <div
+                className="absolute top-full left-0 right-0 mt-2 py-1.5 rounded-xl z-20"
+                style={{
+                  backgroundColor: '#1E2532',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  boxShadow: '0 12px 32px rgba(0,0,0,0.6)',
+                  maxHeight: '200px',
+                  overflowY: 'auto'
+                }}
+              >
+                {versions.map((v) => (
+                  <button
+                    key={v.value}
+                    className="w-full text-left px-3 py-2.5 transition-all duration-150 truncate"
+                    style={{
+                      color: selectedVersion === v.value ? '#A5B4FC' : 'rgba(255,255,255,0.7)',
+                      fontSize: '12px',
+                      backgroundColor: selectedVersion === v.value ? 'rgba(99,102,241,0.15)' : 'transparent',
+                    }}
+                    onClick={() => { setSelectedVersion(v.value); setVersionOpen(false); }}
+                    onMouseEnter={(e) => { if (selectedVersion !== v.value) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.05)'; }}
+                    onMouseLeave={(e) => { if (selectedVersion !== v.value) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'; }}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     );
   };
@@ -409,11 +448,12 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
     >
       {/* Hero Banner (Steam Style) */}
       <div className="relative overflow-hidden" style={{ height: '440px' }}>
-        <img
-          src={game.banner}
-          alt={game.title}
-          className="w-full h-full object-cover"
-          style={{ filter: 'brightness(0.85) saturate(1.15)', transform: 'scale(1.02)' }}
+        <DynamicBackground 
+          images={[game.banner, ...(game.screenshots || [])]} 
+          enabled={enableDynamicBackgrounds}
+          intervalMs={bgImageDurationMs}
+          fadeMs={bgFadeDurationMs}
+          altText={game.title} 
         />
         {/* Vignette Overlay (Reduced Intensity) */}
         <div
@@ -709,7 +749,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
               <span>{game.hoursPlayed.toFixed(1)} hrs</span>
             </div>
           )}
-          <button className="p-2 rounded-lg transition-colors" style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}>
+          <button onClick={() => setBgSettingsModalOpen(true)} className="p-2 rounded-lg transition-colors" style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}>
             <Settings size={15} />
           </button>
           <button className="p-2 rounded-lg transition-colors" style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.6)', cursor: 'pointer' }}>
@@ -1470,89 +1510,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
 
           {/* Right panel - actions */}
           <div className="w-72 shrink-0 space-y-4">
-            {/* Version status & official steam build */}
-            <div
-              className="p-4 rounded-2xl space-y-3"
-              style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
-            >
-              <div className="flex items-center justify-between">
-                <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', fontWeight: 600, letterSpacing: '0.05em' }}>
-                  ESTADO DE VERSIÓN
-                </span>
-                <RefreshCw size={12} className="text-gray-500" />
-              </div>
-
-              <div className="p-2.5 rounded-xl flex flex-col gap-1" style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px' }}>Última Versión Oficial</span>
-                <span style={{ color: '#E2E8F0', fontSize: '12px', fontWeight: 600 }}>
-                  {game.latestVersion || 'No disponible'}
-                </span>
-              </div>
-
-              <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '11px', fontWeight: 600, letterSpacing: '0.05em', display: 'block', marginTop: '12px', marginBottom: '4px' }}>
-                SELECCIONAR PARA DESCARGAR
-              </label>
-              <div className="relative">
-                <button
-                  onClick={() => setVersionOpen(!versionOpen)}
-                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all duration-200"
-                  style={{
-                    backgroundColor: 'rgba(255,255,255,0.06)',
-                    border: versionOpen ? '1px solid rgba(99,102,241,0.5)' : '1px solid rgba(255,255,255,0.1)',
-                    color: '#E2E8F0',
-                    fontSize: '13px',
-                  }}
-                >
-                  <span>{selectedVersion}</span>
-                  <ChevronDown size={14} style={{ color: 'rgba(255,255,255,0.4)', transform: versionOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
-                </button>
-                {versionOpen && (
-                  <div
-                    className="absolute top-full left-0 right-0 mt-1 py-1 rounded-xl z-10"
-                    style={{
-                      backgroundColor: '#1E2532',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-                    }}
-                  >
-                    {versions.map((v) => (
-                      <button
-                        key={v.value}
-                        className="w-full text-left px-3 py-2 transition-all duration-150"
-                        style={{
-                          color: selectedVersion === v.value ? '#A5B4FC' : 'rgba(255,255,255,0.6)',
-                          fontSize: '12px',
-                          backgroundColor: selectedVersion === v.value ? 'rgba(99,102,241,0.15)' : 'transparent',
-                        }}
-                        onClick={() => { setSelectedVersion(v.value); setVersionOpen(false); }}
-                        onMouseEnter={(e) => { if (selectedVersion !== v.value) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.05)'; }}
-                        onMouseLeave={(e) => { if (selectedVersion !== v.value) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'; }}
-                      >
-                        {v.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Botón de solicitar actualización a Admins */}
-              <button
-                onClick={handleRequestUpdate}
-                disabled={requestSent}
-                className="w-full mt-3 flex items-center justify-center gap-2 py-2 px-3 rounded-xl transition-all text-xs font-semibold"
-                style={{
-                  backgroundColor: requestSent ? 'rgba(16, 185, 129, 0.15)' : 'rgba(99,102,241,0.12)',
-                  border: requestSent ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(99,102,241,0.25)',
-                  color: requestSent ? '#34D399' : '#818CF8',
-                  cursor: requestSent ? 'default' : 'pointer'
-                }}
-              >
-                <Megaphone size={13} />
-                {requestSent ? `Petición enviada (${requestCount})` : `Solicitar Actualización (${requestCount})`}
-              </button>
-            </div>
-
-            {/* Action panel */}
+            {/* Action panel (Unified) */}
             <div
               className="p-4 rounded-2xl"
               style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
@@ -1763,6 +1721,96 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                 }}
               >
                 {submittingVersionReq ? 'Enviando...' : 'Enviar Petición'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic Background Settings Modal */}
+      {bgSettingsModalOpen && (
+        <div className="fixed inset-0 flex items-center justify-center z-50">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setBgSettingsModalOpen(false)} />
+          <div className="relative w-full max-w-md rounded-2xl p-6 shadow-2xl border" style={{ backgroundColor: '#151922', borderColor: 'rgba(255,255,255,0.1)' }}>
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2">
+                <Settings size={18} style={{ color: '#818CF8' }} />
+                <h2 style={{ color: '#E2E8F0', fontSize: '16px', fontWeight: 600 }}>Ajustes de Fondo</h2>
+              </div>
+              <button onClick={() => setBgSettingsModalOpen(false)} style={{ color: 'rgba(255,255,255,0.5)' }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 500 }}>Activar fondos dinámicos</div>
+                  <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px' }}>Habilitar la rotación de imágenes</div>
+                </div>
+                <button
+                  onClick={() => {
+                    const newVal = !enableDynamicBackgrounds;
+                    setEnableDynamicBackgrounds(newVal);
+                    if (window.chrome?.webview) {
+                      window.chrome.webview.postMessage({ action: "SAVE_SETTINGS", settings: { enableDynamicBackgrounds: newVal, bgImageDurationMs, bgFadeDurationMs } });
+                    }
+                  }}
+                  className="relative flex items-center transition-all duration-300 rounded-full"
+                  style={{ width: '40px', height: '22px', backgroundColor: enableDynamicBackgrounds ? '#6366F1' : 'rgba(255,255,255,0.12)' }}
+                >
+                  <div className="absolute rounded-full transition-all duration-300 bg-white" style={{ width: '16px', height: '16px', left: enableDynamicBackgrounds ? '21px' : '3px' }} />
+                </button>
+              </div>
+
+              {enableDynamicBackgrounds && (
+                <>
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 500 }}>Tiempo por imagen</div>
+                      <div style={{ color: '#818CF8', fontSize: '12px' }}>{(bgImageDurationMs / 1000).toFixed(1)} s</div>
+                    </div>
+                    <input 
+                      type="range" min="3000" max="20000" step="500" 
+                      value={bgImageDurationMs} 
+                      onChange={(e) => setBgImageDurationMs(parseInt(e.target.value))}
+                      onMouseUp={() => {
+                        if (window.chrome?.webview) {
+                          window.chrome.webview.postMessage({ action: "SAVE_SETTINGS", settings: { enableDynamicBackgrounds, bgImageDurationMs, bgFadeDurationMs } });
+                        }
+                      }}
+                      className="w-full accent-indigo-500" 
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 500 }}>Velocidad del fundido</div>
+                      <div style={{ color: '#818CF8', fontSize: '12px' }}>{(bgFadeDurationMs / 1000).toFixed(1)} s</div>
+                    </div>
+                    <input 
+                      type="range" min="200" max="10000" step="100" 
+                      value={bgFadeDurationMs} 
+                      onChange={(e) => setBgFadeDurationMs(parseInt(e.target.value))}
+                      onMouseUp={() => {
+                        if (window.chrome?.webview) {
+                          window.chrome.webview.postMessage({ action: "SAVE_SETTINGS", settings: { enableDynamicBackgrounds, bgImageDurationMs, bgFadeDurationMs } });
+                        }
+                      }}
+                      className="w-full accent-indigo-500" 
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+            
+            <div className="mt-6 flex justify-end">
+              <button 
+                onClick={() => setBgSettingsModalOpen(false)}
+                className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:bg-indigo-600"
+                style={{ backgroundColor: '#6366F1', color: '#fff' }}
+              >
+                Cerrar
               </button>
             </div>
           </div>

@@ -107,6 +107,9 @@ export function SettingsView() {
 
   const [steamApiKey, setSteamApiKey] = useState('');
   const [showBuildId, setShowBuildId] = useState(false);
+  const [enableDynamicBackgrounds, setEnableDynamicBackgrounds] = useState(true);
+  const [bgImageDurationMs, setBgImageDurationMs] = useState(10000);
+  const [bgFadeDurationMs, setBgFadeDurationMs] = useState(5000);
 
   // Escuchar mensaje SETTINGS_LOADED desde el backend
   React.useEffect(() => {
@@ -115,6 +118,9 @@ export function SettingsView() {
       if (msg && msg.type === "SETTINGS_LOADED") {
         setSteamApiKey(msg.settings?.steamApiKey || '');
         setShowBuildId(msg.settings?.showBuildId || false);
+        setEnableDynamicBackgrounds(msg.settings?.enableDynamicBackgrounds ?? true);
+        setBgImageDurationMs(msg.settings?.bgImageDurationMs ?? 10000);
+        setBgFadeDurationMs(msg.settings?.bgFadeDurationMs ?? 5000);
       }
     };
 
@@ -136,7 +142,10 @@ export function SettingsView() {
         action: "SAVE_SETTINGS",
         settings: {
           steamApiKey: steamApiKey,
-          showBuildId: showBuildId
+          showBuildId: showBuildId,
+          enableDynamicBackgrounds: enableDynamicBackgrounds,
+          bgImageDurationMs: bgImageDurationMs,
+          bgFadeDurationMs: bgFadeDurationMs
         }
       });
       alert("Ajustes guardados correctamente");
@@ -339,6 +348,42 @@ export function SettingsView() {
           <SettingRow icon={Monitor} label="Aceleración por hardware" description="Usar GPU para renderizar la interfaz (recomendado)" iconColor="#F59E0B">
             <Toggle value={settings.hardwareAccel} onChange={() => toggle('hardwareAccel')} />
           </SettingRow>
+
+          <SettingRow icon={Palette} label="Fondos de juego dinámicos" description="Cambia suavemente entre imágenes del juego en la página principal" iconColor="#10B981">
+            <Toggle value={enableDynamicBackgrounds} onChange={() => {
+              const newVal = !enableDynamicBackgrounds;
+              setEnableDynamicBackgrounds(newVal);
+              if (window.chrome && window.chrome.webview) {
+                window.chrome.webview.postMessage({
+                  action: "SAVE_SETTINGS",
+                  settings: { steamApiKey: steamApiKey, showBuildId: showBuildId, enableDynamicBackgrounds: newVal, bgImageDurationMs, bgFadeDurationMs }
+                });
+              }
+            }} />
+          </SettingRow>
+
+          {enableDynamicBackgrounds && (
+            <>
+              <SettingRow icon={Clock} label="Duración por imagen" description={`${(bgImageDurationMs / 1000).toFixed(1)} segundos`} iconColor="#6366F1">
+                <input 
+                  type="range" min="3000" max="20000" step="500" 
+                  value={bgImageDurationMs} 
+                  onChange={(e) => setBgImageDurationMs(parseInt(e.target.value))}
+                  onMouseUp={handleSaveSettings}
+                  className="w-32 accent-indigo-500" 
+                />
+              </SettingRow>
+              <SettingRow icon={Clock} label="Velocidad del fundido" description={`${(bgFadeDurationMs / 1000).toFixed(1)} segundos`} iconColor="#6366F1">
+                <input 
+                  type="range" min="200" max="10000" step="100" 
+                  value={bgFadeDurationMs} 
+                  onChange={(e) => setBgFadeDurationMs(parseInt(e.target.value))}
+                  onMouseUp={handleSaveSettings}
+                  className="w-32 accent-indigo-500" 
+                />
+              </SettingRow>
+            </>
+          )}
         </Section>
 
         {/* Sincronización */}

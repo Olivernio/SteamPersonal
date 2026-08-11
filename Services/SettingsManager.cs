@@ -8,6 +8,9 @@ namespace SteamPersonal.Services
     {
         public string SteamApiKey { get; set; } = "";
         public bool ShowBuildId { get; set; } = false;
+        public bool EnableDynamicBackgrounds { get; set; } = true;
+        public int BgImageDurationMs { get; set; } = 10000;
+        public int BgFadeDurationMs { get; set; } = 5000;
     }
 
     public static class SettingsManager

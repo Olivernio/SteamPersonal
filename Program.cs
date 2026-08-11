@@ -258,7 +258,10 @@ namespace SteamPersonal
                         settings = new
                         {
                             steamApiKey = settings.SteamApiKey,
-                            showBuildId = settings.ShowBuildId
+                            showBuildId = settings.ShowBuildId,
+                            enableDynamicBackgrounds = settings.EnableDynamicBackgrounds,
+                            bgImageDurationMs = settings.BgImageDurationMs,
+                            bgFadeDurationMs = settings.BgFadeDurationMs
                         }
                     });
                 }
@@ -279,6 +282,26 @@ namespace SteamPersonal
                         {
                             settings.ShowBuildId = false;
                         }
+
+                        if (settingsProp.TryGetProperty("enableDynamicBackgrounds", out var enableBgProp) && enableBgProp.ValueKind == System.Text.Json.JsonValueKind.True)
+                        {
+                            settings.EnableDynamicBackgrounds = true;
+                        }
+                        else if (settingsProp.TryGetProperty("enableDynamicBackgrounds", out var enableBgPropFalse) && enableBgPropFalse.ValueKind == System.Text.Json.JsonValueKind.False)
+                        {
+                            settings.EnableDynamicBackgrounds = false;
+                        }
+
+                        if (settingsProp.TryGetProperty("bgImageDurationMs", out var bgImageDurProp) && bgImageDurProp.ValueKind == System.Text.Json.JsonValueKind.Number)
+                        {
+                            settings.BgImageDurationMs = bgImageDurProp.GetInt32();
+                        }
+                        
+                        if (settingsProp.TryGetProperty("bgFadeDurationMs", out var bgFadeDurProp) && bgFadeDurProp.ValueKind == System.Text.Json.JsonValueKind.Number)
+                        {
+                            settings.BgFadeDurationMs = bgFadeDurProp.GetInt32();
+                        }
+
                         SteamPersonal.Services.SettingsManager.Save(settings);
                     }
                 }
