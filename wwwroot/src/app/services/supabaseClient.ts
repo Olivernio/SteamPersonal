@@ -40,7 +40,8 @@ export interface SupabaseGame {
   is_active: boolean;
   request_count: number;
   available_versions?: { version: string; url: string; notes?: string; releaseDate?: string }[];
-  dlcs?: (string | DlcItem)[];
+  dlcs?: { id: string; game_id: string; name: string }[];
+  game_versions?: { id: string; version_name: string; game_version_dlcs?: { game_version_id: string; dlc_id: string }[] }[];
   controller_support?: boolean;
   requirements?: { min: string; rec: string };
   screenshots?: string[];
@@ -58,7 +59,11 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
         installation_recipes (
           steps
         ),
-        game_versions (*)
+        game_versions (
+          *,
+          game_version_dlcs (*)
+        ),
+        dlcs (*)
       `)
       .eq('is_active', true)
       .order('created_at', { ascending: false });
@@ -88,6 +93,14 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
         : [row.cover_image_url || 'https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600'];
 
       const dlcs = Array.isArray(row.dlcs) ? row.dlcs : [];
+      let gameVersionDlcs: { game_version_id: string; dlc_id: string }[] = [];
+      if (Array.isArray(row.game_versions)) {
+        row.game_versions.forEach((v: any) => {
+          if (Array.isArray(v.game_version_dlcs)) {
+            gameVersionDlcs = gameVersionDlcs.concat(v.game_version_dlcs);
+          }
+        });
+      }
 
       const reqs = row.requirements && typeof row.requirements === 'object'
         ? {
@@ -116,6 +129,7 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
         // Filtrar Versiones Técnicas
         if (v.build_id) {
           availableVersions.push({
+            id: v.id,
             version: v.version_name || v.changelog_title || 'Update',
             url: v.download_url || row.download_url || '',
             notes: v.build_id,
@@ -176,6 +190,7 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
         changelog: changelog,
         requestCount: row.request_count || 0,
         dlcs,
+        gameVersionDlcs,
         controllerSupport: row.controller_support ?? true,
         size: sizeMB,
         downloadUrl: row.download_url,

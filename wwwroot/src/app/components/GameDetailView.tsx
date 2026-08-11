@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Play, Download, MessageSquare, Gamepad2, Calendar, HardDrive, ChevronDown, Monitor, Clock, Star, Package, Cloud, Settings, Info, Heart, Award, Building2, Megaphone, Upload, RefreshCw, X, FolderCheck } from 'lucide-react';
-import { Game, normalizeDlc } from '../data/games';
+import { Game } from '../data/games';
 import { backupSavegame, restoreSavegame, getSavegameInfo, getAchievements, onWebViewMessage, formatBytes, WebViewMessage } from '../webview-bridge';
 import { requestGameUpdate, requestSpecificVersion } from '../services/supabaseClient';
 
@@ -795,37 +795,39 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
           )}
         </button>
 
-        {/* Tab 3: DLCs (Active if game.dlcs.length > 0, else Off) */}
+        {/* Tab 3: DLCs (Active if game.dlcs?.length > 0, else Off) */}
         <button
-          disabled={game.dlcs.length === 0}
+          disabled={!(game.dlcs && game.dlcs.length > 0)}
           onClick={() => setSubTab('dlcs')}
           className="flex items-center gap-2 px-4 py-3 relative transition-colors"
           style={{
-            color: game.dlcs.length === 0
+            color: !(game.dlcs && game.dlcs.length > 0)
               ? 'rgba(255,255,255,0.2)'
               : subTab === 'dlcs'
               ? '#FFF'
               : 'rgba(255,255,255,0.5)',
             fontSize: '13px',
             fontWeight: subTab === 'dlcs' ? 700 : 500,
-            cursor: game.dlcs.length === 0 ? 'not-allowed' : 'pointer',
+            cursor: !(game.dlcs && game.dlcs.length > 0) ? 'not-allowed' : 'pointer',
             border: 'none',
             background: 'transparent',
-            opacity: game.dlcs.length === 0 ? 0.4 : 1,
+            opacity: !(game.dlcs && game.dlcs.length > 0) ? 0.4 : 1,
           }}
         >
           <span>DLCs</span>
-          <span
-            className="px-1.5 py-0.5 rounded-md text-xs"
-            style={{
-              backgroundColor: game.dlcs.length > 0 ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.05)',
-              color: game.dlcs.length > 0 ? '#A5B4FC' : 'rgba(255,255,255,0.3)',
-              fontSize: '10px',
-              fontWeight: 700,
-            }}
-          >
-            {game.dlcs.length}
-          </span>
+          {game.dlcs && game.dlcs.length > 0 && (
+            <span
+              className="px-1.5 py-0.5 rounded-md text-xs"
+              style={{
+                backgroundColor: subTab === 'dlcs' ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.05)',
+                color: subTab === 'dlcs' ? '#A5B4FC' : 'rgba(255,255,255,0.3)',
+                fontSize: '10px',
+                fontWeight: 700,
+              }}
+            >
+              {game.dlcs.length}
+            </span>
+          )}
           {subTab === 'dlcs' && (
             <div
               className="absolute bottom-0 left-0 right-0 h-0.5"
@@ -986,7 +988,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                     className="px-2.5 py-1 rounded-lg text-xs"
                     style={{ backgroundColor: 'rgba(99,102,241,0.15)', color: '#A5B4FC', fontWeight: 600 }}
                   >
-                    {game.dlcs.length} packs activos
+                    {game.dlcs?.length || 0} packs activos
                   </span>
                 </div>
 
@@ -995,68 +997,58 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                 </p>
 
                 <div className="space-y-3">
-                  {game.dlcs.map((rawDlc, idx) => {
-                    const dlc = normalizeDlc(rawDlc);
+                  {(game.dlcs || []).map((dlc, idx) => {
+                    const currentVersionObj = game.availableVersions?.find(v => v.version === selectedVersion);
+                    const isIncluded = currentVersionObj && currentVersionObj.id 
+                        ? game.gameVersionDlcs?.some(gvd => gvd.dlc_id === dlc.id && gvd.game_version_id === currentVersionObj.id) 
+                        : false;
+
                     return (
                       <div
                         key={idx}
-                        className="flex items-center justify-between p-4 rounded-xl transition-all hover:bg-white/[0.06]"
-                        style={{ backgroundColor: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+                        className="flex items-center justify-between p-4 rounded-xl transition-all"
+                        style={{ 
+                          backgroundColor: isIncluded ? 'rgba(99,102,241,0.08)' : 'rgba(255,255,255,0.02)', 
+                          border: isIncluded ? '1px solid rgba(99,102,241,0.2)' : '1px solid rgba(255,255,255,0.05)',
+                          opacity: isIncluded ? 1 : 0.6
+                        }}
                       >
                         <div className="flex items-center gap-4 min-w-0 flex-1 pr-4">
                           {/* DLC Image / Icon */}
                           <div
-                            className="w-24 h-16 rounded-xl overflow-hidden shrink-0 flex items-center justify-center"
+                            className="w-16 h-16 rounded-xl overflow-hidden shrink-0 flex items-center justify-center"
                             style={{ backgroundColor: '#0A0D14', border: '1px solid rgba(255,255,255,0.1)' }}
                           >
-                            {dlc.image ? (
-                              <img
-                                src={dlc.image}
-                                alt={dlc.name}
-                                className="w-full h-full object-cover"
-                                onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                              />
-                            ) : (
-                              <Package size={22} className="text-indigo-400/60" />
-                            )}
+                            <Package size={22} className={isIncluded ? "text-indigo-400" : "text-gray-500"} />
                           </div>
 
                           {/* DLC Title & Description */}
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <div style={{ color: '#E2E8F0', fontSize: '14px', fontWeight: 700 }}>{dlc.name}</div>
-                              <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px' }}>• Pack #{idx + 1}</span>
+                              <div style={{ color: isIncluded ? '#E2E8F0' : '#94A3B8', fontSize: '14px', fontWeight: 700 }}>
+                                {dlc.name}
+                              </div>
+                              <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '10px' }}>• Pack #{idx + 1}</span>
                             </div>
 
-                            {dlc.description ? (
-                              <p
-                                style={{
-                                  color: 'rgba(255,255,255,0.6)',
-                                  fontSize: '12px',
-                                  marginTop: '2px',
-                                  display: '-webkit-box',
-                                  WebkitLineClamp: 2,
-                                  WebkitBoxOrient: 'vertical',
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis'
-                                }}
-                              >
-                                {dlc.description}
-                              </p>
-                            ) : (
-                              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '11px', marginTop: '2px' }}>
-                                Contenido oficial activado en el juego base.
-                              </p>
-                            )}
+                            <p style={{ color: isIncluded ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.3)', fontSize: '11px', marginTop: '4px' }}>
+                              {isIncluded ? 'Incluido en la versión seleccionada.' : 'Falta en la versión seleccionada.'}
+                            </p>
                           </div>
                         </div>
 
-                        <span
-                          className="px-3 py-1 rounded-lg shrink-0"
-                          style={{ backgroundColor: 'rgba(16,185,129,0.15)', color: '#10B981', fontSize: '11px', fontWeight: 700 }}
-                        >
-                          Incluido
-                        </span>
+                        {/* Status Badge */}
+                        <div className="shrink-0 flex items-center gap-2">
+                          {isIncluded ? (
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'rgba(16,185,129,0.15)', color: '#34D399', padding: '4px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: 700 }}>
+                              <FolderCheck size={14} /> Incluido
+                            </span>
+                          ) : (
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'rgba(239,68,68,0.1)', color: '#F87171', padding: '4px 10px', borderRadius: '8px', fontSize: '11px', fontWeight: 600 }}>
+                              <X size={14} /> Ausente
+                            </span>
+                          )}
+                        </div>
                       </div>
                     );
                   })}

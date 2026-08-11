@@ -159,7 +159,8 @@ USING (true);
 -- 1. Eliminar las columnas JSON obsoletas de la tabla 'games'
 ALTER TABLE games
 DROP COLUMN available_versions,
-DROP COLUMN changelog;
+DROP COLUMN changelog,
+DROP COLUMN dlcs;
 
 -- 2. Crear la nueva tabla relacional 'game_versions'
 CREATE TABLE game_versions (
@@ -185,3 +186,29 @@ ADD CONSTRAINT uq_game_version UNIQUE (game_id, version_name);
 -- 4. Crear políticas RLS para 'game_versions'
 ALTER TABLE game_versions ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Public can read game versions" ON game_versions FOR SELECT USING (true);
+
+-- 5. Crear tabla del catálogo maestro de DLCs
+CREATE TABLE dlcs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    game_id UUID NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+ALTER TABLE dlcs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Public can read dlcs" ON dlcs FOR SELECT USING (true);
+CREATE POLICY "Permitir insercion de dlcs a administradores" ON dlcs FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "Permitir edicion de dlcs a administradores" ON dlcs FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir eliminacion de dlcs a administradores" ON dlcs FOR DELETE TO authenticated USING (true);
+
+-- 6. Crear tabla intermedia para DLCs incluidos en una versión
+CREATE TABLE game_version_dlcs (
+    game_version_id UUID NOT NULL REFERENCES game_versions(id) ON DELETE CASCADE,
+    dlc_id UUID NOT NULL REFERENCES dlcs(id) ON DELETE CASCADE,
+    PRIMARY KEY (game_version_id, dlc_id)
+);
+
+ALTER TABLE game_version_dlcs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Public can read game_version_dlcs" ON game_version_dlcs FOR SELECT USING (true);
+CREATE POLICY "Permitir insercion de game_version_dlcs a admin" ON game_version_dlcs FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "Permitir eliminacion de game_version_dlcs a admin" ON game_version_dlcs FOR DELETE TO authenticated USING (true);

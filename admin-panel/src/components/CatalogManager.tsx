@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseAdmin';
-import type { DbGame, RecipeStep, DlcItem } from '../services/supabaseAdmin';
+import type { DbGame, RecipeStep, DlcItem, DbGameVersion } from '../services/supabaseAdmin';
 import { fetchSteamGameDetails, searchSteamGames } from '../services/steamService';
 import type { SteamSearchResult } from '../services/steamService';
 import { VisualRecipeBuilder } from './VisualRecipeBuilder';
@@ -41,6 +41,15 @@ export const CatalogManager: React.FC = () => {
   const [savePathPattern, setSavePathPattern] = useState('');
   const [version, setVersion] = useState('1.0.0');
   const [dlcsList, setDlcsList] = useState<DlcItem[]>([]);
+  const [gameVersions, setGameVersions] = useState<DbGameVersion[]>([]);
+  const [versionDlcs, setVersionDlcs] = useState<{ [versionId: string]: string[] }>({});
+
+  const uuidv4 = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  };
   const [controllerSupport, setControllerSupport] = useState(true);
   const [reqMin, setReqMin] = useState('');
   const [reqRec, setReqRec] = useState('');
@@ -54,7 +63,7 @@ export const CatalogManager: React.FC = () => {
   const [showBulkDlcImport, setShowBulkDlcImport] = useState(false);
 
   const handleAddDlc = () => {
-    setDlcsList((prev) => [...prev, { name: '', image: '', description: '' }]);
+    setDlcsList((prev) => [...prev, { id: uuidv4(), name: '' }]);
   };
 
   const handleUpdateDlc = (index: number, field: keyof DlcItem, value: string) => {
@@ -81,21 +90,15 @@ export const CatalogManager: React.FC = () => {
     const parsed: DlcItem[] = lines.map((line) => {
       if (line.includes('=')) {
         const parts = line.split('=');
-        const appId = parts[0].trim();
         const dlcName = parts.slice(1).join('=').trim();
-        const isNumeric = /^\d+$/.test(appId);
-        const imageUrl = isNumeric ? `https://cdn.akamai.steamstatic.com/steam/apps/${appId}/header.jpg` : '';
         return {
-          id: isNumeric ? appId : undefined,
-          name: dlcName || line,
-          image: imageUrl,
-          description: ''
+          id: uuidv4(),
+          name: dlcName || line
         };
       }
       return {
-        name: line,
-        image: '',
-        description: ''
+        id: uuidv4(),
+        name: line
       };
     });
 
@@ -233,6 +236,8 @@ export const CatalogManager: React.FC = () => {
     setSavePathPattern('');
     setVersion('1.0.0');
     setDlcsList([]);
+    setGameVersions([]);
+    setVersionDlcs({});
     setControllerSupport(true);
     setReqMin('OS: Windows 10 64-bit | RAM: 8 GB');
     setReqRec('OS: Windows 11 64-bit | RAM: 16 GB');
@@ -267,13 +272,27 @@ export const CatalogManager: React.FC = () => {
     setSavePathPattern(game.save_path_pattern || '');
     setVersion(game.latest_official_version || '1.0.0');
 
-    const rawDlcs = game.dlcs || [];
-    const normalizedDlcs: DlcItem[] = rawDlcs.map((item) =>
-      typeof item === 'string'
-        ? { name: item, image: '', description: '' }
-        : { name: item.name || '', image: item.image || '', description: item.description || '' }
-    );
-    setDlcsList(normalizedDlcs);
+    // Fetch master DLCs
+    const { data: dlcData } = await supabase.from('dlcs').select('*').eq('game_id', game.id!);
+    setDlcsList(dlcData || []);
+
+    // Fetch game_versions
+    const { data: versionsData } = await supabase.from('game_versions').select('*').eq('game_id', game.id!).order('created_at', { ascending: false });
+    setGameVersions(versionsData || []);
+
+    // Fetch game_version_dlcs
+    const versionMap: { [versionId: string]: string[] } = {};
+    if (versionsData && versionsData.length > 0) {
+      const versionIds = versionsData.map(v => v.id);
+      const { data: gvdData } = await supabase.from('game_version_dlcs').select('*').in('game_version_id', versionIds);
+      if (gvdData) {
+        gvdData.forEach(gvd => {
+          if (!versionMap[gvd.game_version_id]) versionMap[gvd.game_version_id] = [];
+          versionMap[gvd.game_version_id].push(gvd.dlc_id);
+        });
+      }
+    }
+    setVersionDlcs(versionMap);
 
     setControllerSupport(game.controller_support ?? true);
     setReqMin(game.requirements?.min || 'OS: Windows 10 64-bit | RAM: 8 GB');
@@ -304,7 +323,7 @@ export const CatalogManager: React.FC = () => {
     e.preventDefault();
     setSaving(true);
 
-    const dlcs = dlcsList.filter((d) => d.name.trim() !== '');
+
 
     const screenshots = screenshotsText
       .split('\n')
@@ -330,7 +349,6 @@ export const CatalogManager: React.FC = () => {
       save_path_pattern: savePathPattern || null,
       latest_official_version: version,
       is_active: true,
-      dlcs,
       controller_support: controllerSupport,
       requirements: { min: reqMin, rec: reqRec },
       screenshots
@@ -371,6 +389,46 @@ export const CatalogManager: React.FC = () => {
         );
 
       if (recipeErr) console.warn('Aviso al guardar receta:', recipeErr.message);
+    }
+
+    // Save DLCs
+    if (gameId) {
+      const dlcPayload = dlcsList.filter(d => d.name.trim() !== '').map(d => ({
+        id: d.id,
+        game_id: gameId,
+        name: d.name
+      }));
+      
+      if (dlcPayload.length > 0) {
+        const { error: dlcErr } = await supabase
+          .from('dlcs')
+          .upsert(dlcPayload, { onConflict: 'id' });
+        
+        if (dlcErr) {
+          console.warn('Error saving DLCs', dlcErr);
+        } else {
+          // Update game_version_dlcs
+          if (gameVersions.length > 0) {
+            const versionIds = gameVersions.map(v => v.id);
+            await supabase.from('game_version_dlcs').delete().in('game_version_id', versionIds);
+            
+            const gvdPayload: any[] = [];
+            Object.entries(versionDlcs).forEach(([vId, dlcIds]) => {
+              dlcIds.forEach(dlcId => {
+                gvdPayload.push({
+                  game_version_id: vId,
+                  dlc_id: dlcId
+                });
+              });
+            });
+            
+            if (gvdPayload.length > 0) {
+              const { error: gvdErr } = await supabase.from('game_version_dlcs').insert(gvdPayload);
+              if (gvdErr) console.warn('Error saving game_version_dlcs', gvdErr);
+            }
+          }
+        }
+      }
     }
 
     setSaving(false);
@@ -1292,36 +1350,13 @@ export const CatalogManager: React.FC = () => {
                               alignItems: 'center'
                             }}
                           >
-                            {/* DLC Image Preview Box */}
-                            <div style={{ width: '60px', height: '40px', borderRadius: '8px', overflow: 'hidden', backgroundColor: '#000', border: '1px solid rgba(255,255,255,0.1)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                              {dlc.image ? (
-                                <img src={dlc.image} alt={dlc.name || 'DLC'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => (e.currentTarget.style.display = 'none')} />
-                              ) : (
-                                <Package size={18} style={{ color: 'rgba(255,255,255,0.2)' }} />
-                              )}
-                            </div>
-
                             {/* Inputs Column */}
                             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                                <input
-                                  value={dlc.name}
-                                  onChange={(e) => handleUpdateDlc(idx, 'name', e.target.value)}
-                                  placeholder="Nombre del DLC"
-                                  style={{ padding: '6px 8px', borderRadius: '6px', backgroundColor: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', color: '#E2E8F0', fontSize: '12px', fontWeight: 600 }}
-                                />
-                                <input
-                                  value={dlc.image || ''}
-                                  onChange={(e) => handleUpdateDlc(idx, 'image', e.target.value)}
-                                  placeholder="URL Imagen del DLC"
-                                  style={{ padding: '6px 8px', borderRadius: '6px', backgroundColor: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', color: '#E2E8F0', fontSize: '12px' }}
-                                />
-                              </div>
                               <input
-                                value={dlc.description || ''}
-                                onChange={(e) => handleUpdateDlc(idx, 'description', e.target.value)}
-                                placeholder="Descripción opcional..."
-                                style={{ padding: '6px 8px', borderRadius: '6px', backgroundColor: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', color: '#E2E8F0', fontSize: '12px' }}
+                                value={dlc.name}
+                                onChange={(e) => handleUpdateDlc(idx, 'name', e.target.value)}
+                                placeholder="Nombre del DLC"
+                                style={{ padding: '6px 8px', borderRadius: '6px', backgroundColor: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', color: '#E2E8F0', fontSize: '12px', fontWeight: 600 }}
                               />
                             </div>
 
@@ -1339,6 +1374,53 @@ export const CatalogManager: React.FC = () => {
                       </div>
                     )}
                   </div>
+
+                  {/* DLC Matrix UI */}
+                  {gameVersions.length > 0 && (
+                    <div style={{ marginTop: '24px', marginBottom: '24px' }}>
+                      <h3 style={{ margin: '0 0 12px 0', fontSize: '15px', color: '#E2E8F0', fontWeight: 600 }}>Inclusión en Versiones</h3>
+                      <div style={{ backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', overflow: 'hidden', overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', color: '#CBD5E1' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                              <th style={{ padding: '12px', textAlign: 'left', fontWeight: 600, minWidth: '150px' }}>Versión</th>
+                              {dlcsList.filter(d => d.name.trim() !== '').map((dlc, idx) => (
+                                <th key={idx} style={{ padding: '12px', textAlign: 'center', fontWeight: 600, minWidth: '100px' }}>{dlc.name}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {gameVersions.map((version) => (
+                              <tr key={version.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                <td style={{ padding: '12px', borderRight: '1px solid rgba(255,255,255,0.03)' }}>{version.version_name}</td>
+                                {dlcsList.filter(d => d.name.trim() !== '').map((dlc, idx) => {
+                                  const isChecked = (versionDlcs[version.id] || []).includes(dlc.id!);
+                                  return (
+                                    <td key={idx} style={{ padding: '12px', textAlign: 'center' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={(e) => {
+                                          setVersionDlcs(prev => {
+                                            const prevSet = prev[version.id] || [];
+                                            const newSet = e.target.checked 
+                                              ? [...prevSet, dlc.id!]
+                                              : prevSet.filter(id => id !== dlc.id!);
+                                            return { ...prev, [version.id]: newSet };
+                                          });
+                                        }}
+                                        style={{ cursor: 'pointer', accentColor: '#6366F1', width: '16px', height: '16px' }}
+                                      />
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Controller support checkbox */}
                   <div style={{ paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>

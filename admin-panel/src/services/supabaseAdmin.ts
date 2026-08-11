@@ -7,9 +7,15 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export interface DlcItem {
   id?: string;
+  game_id?: string;
   name: string;
-  image?: string;
-  description?: string;
+  created_at?: string;
+}
+
+export interface DbGameVersion {
+  id: string;
+  game_id: string;
+  version_name: string;
 }
 
 export interface DbGame {
@@ -35,7 +41,6 @@ export interface DbGame {
   executable_relative_path: string;
   is_active: boolean;
   request_count?: number;
-  dlcs?: (string | DlcItem)[];
   controller_support?: boolean;
   requirements?: { min: string; rec: string };
   screenshots?: string[];

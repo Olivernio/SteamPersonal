@@ -9,6 +9,10 @@ namespace SteamPersonal.SyncWorker.Models;
 [JsonSerializable(typeof(GameVersionDbRow))]
 [JsonSerializable(typeof(List<GameVersionDbRow>))]
 [JsonSerializable(typeof(GameUpsertPayload))]
+[JsonSerializable(typeof(DlcDbRow))]
+[JsonSerializable(typeof(List<DlcDbRow>))]
+[JsonSerializable(typeof(GameVersionDlcDbRow))]
+[JsonSerializable(typeof(List<GameVersionDlcDbRow>))]
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower)]
 public partial class SyncWorkerJsonContext : JsonSerializerContext;

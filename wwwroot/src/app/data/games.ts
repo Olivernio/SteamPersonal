@@ -7,20 +7,14 @@ export interface SystemRequirements {
 
 export interface DlcItem {
   id?: string;
+  game_id?: string;
   name: string;
-  image?: string;
-  description?: string;
+  created_at?: string;
 }
 
-export function normalizeDlc(dlc: string | DlcItem): DlcItem {
-  if (typeof dlc === 'string') {
-    return { name: dlc, image: '', description: '' };
-  }
-  return {
-    name: dlc?.name || 'DLC',
-    image: dlc?.image || '',
-    description: dlc?.description || ''
-  };
+export interface GameVersionDlc {
+  game_version_id: string;
+  dlc_id: string;
 }
 
 export interface Game {
@@ -43,7 +37,8 @@ export interface Game {
   requirements: SystemRequirements;
   changelog: { version: string; date: string; notes: string[] }[];
   requestCount: number;
-  dlcs: (string | DlcItem)[];
+  dlcs?: DlcItem[];
+  gameVersionDlcs?: GameVersionDlc[];
   controllerSupport: boolean;
   size: string;
   downloadUrl?: string;
@@ -53,7 +48,7 @@ export interface Game {
   developerLogoUrl?: string;
   publisherLogoUrl?: string;
   steamAppId?: number;
-  availableVersions?: { version: string; url: string; notes?: string; releaseDate?: string }[];
+  availableVersions?: { id?: string; version: string; url: string; notes?: string; releaseDate?: string }[];
   savePathPattern?: string;
   recipeSteps?: any[];
 }
