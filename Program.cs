@@ -324,12 +324,54 @@ namespace SteamPersonal
                         _currentGameTitle = titleProp.GetString() ?? "Descarga Activa";
                     }
 
+                    string version = "1.0.0";
+                    if (root.TryGetProperty("version", out var versionProp))
+                    {
+                        version = versionProp.GetString() ?? "1.0.0";
+                    }
+
                     var recipe = new SteamPersonal.Services.Models.InstallationRecipe
                     {
-                        Title = _currentGameTitle
+                        Title = _currentGameTitle,
+                        LatestOfficialVersion = version
                     };
 
                     _ = _recipeService.ExecuteRecipeAsync(recipe, url);
+                }
+                else if (action == "CHECK_INSTALLATIONS")
+                {
+                    var gamesArray = root.GetProperty("games").EnumerateArray();
+                    var installedMap = new Dictionary<string, string>();
+                    string juegosDir = Path.Combine(Directory.GetCurrentDirectory(), "Juegos");
+
+                    foreach (var game in gamesArray)
+                    {
+                        string title = game.GetString() ?? "";
+                        if (string.IsNullOrEmpty(title)) continue;
+
+                        string safeTitle = string.Concat(title.Split(Path.GetInvalidFileNameChars())).Trim();
+                        string gameDir = Path.Combine(juegosDir, safeTitle);
+                        if (Directory.Exists(gameDir))
+                        {
+                            string versionFile = Path.Combine(gameDir, "version.txt");
+                            if (File.Exists(versionFile))
+                            {
+                                installedMap[title] = File.ReadAllText(versionFile).Trim();
+                            }
+                            else
+                            {
+                                installedMap[title] = "1.0.0";
+                            }
+                        }
+                    }
+
+                    var response = new
+                    {
+                        action = "INSTALLATION_STATUS",
+                        installedMap = installedMap
+                    };
+                    string jsonData = System.Text.Json.JsonSerializer.Serialize(response);
+                    _webView.Invoke(new Action(() => SendToFrontend(jsonData)));
                 }
                 else if (action == "LAUNCH_GAME")
                 {

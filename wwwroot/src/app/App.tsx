@@ -106,6 +106,18 @@ export default function App() {
         case 'LAUNCH_FAILED':
           alert(`No se pudo iniciar el juego: ${msg.error}`);
           break;
+        case 'INSTALLATION_STATUS':
+          setGames((prev) =>
+            prev.map((g) => {
+              const installedVersion = msg.installedMap[g.title];
+              if (installedVersion) {
+                const isUpdated = installedVersion === g.latestVersion;
+                return { ...g, currentVersion: installedVersion, status: isUpdated ? 'updated' : 'update_available' };
+              }
+              return { ...g, status: 'not_installed' };
+            })
+          );
+          break;
       }
     });
 
@@ -116,6 +128,9 @@ export default function App() {
   const loadCatalog = useCallback(async () => {
     const fetchedGames = await fetchGamesFromSupabase();
     setGames(fetchedGames);
+    if (window.chrome?.webview) {
+      window.chrome.webview.postMessage({ action: 'CHECK_INSTALLATIONS', games: fetchedGames.map(g => g.title) });
+    }
   }, []);
 
   useEffect(() => {
@@ -147,11 +162,13 @@ export default function App() {
     );
   }, []);
 
-  const handleStartDownload = useCallback((game: Game, customUrl?: string) => {
+  const handleStartDownload = useCallback((game: Game, version: string, customUrl?: string) => {
     const targetUrl = customUrl || game.downloadUrl || 'https://drive.google.com/file/d/1BziDPAqWT5N5jV-5A2nB3d2Z5g7_wKk3/view';
     
     // Trigger C# download via WebView2 bridge
-    startDownload(targetUrl, game.title);
+    if (window.chrome?.webview) {
+      window.chrome.webview.postMessage({ action: 'START_DOWNLOAD', url: targetUrl, gameTitle: game.title, version });
+    }
 
     // Initialize state immediately in UI for instant responsiveness
     dispatchDownload({

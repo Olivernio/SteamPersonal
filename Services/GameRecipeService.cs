@@ -88,6 +88,11 @@ namespace SteamPersonal.Services
                     OnStepProgress(i + 1, totalSteps, step.Action, desc, "completed");
                 }
 
+                if (!string.IsNullOrEmpty(recipe.LatestOfficialVersion))
+                {
+                    File.WriteAllText(Path.Combine(installDir, "version.txt"), recipe.LatestOfficialVersion);
+                }
+
                 RecipeCompleted?.Invoke(this, installDir);
             }
             catch (Exception ex)

@@ -8,7 +8,7 @@ interface LibraryViewProps {
   onGameSelect: (game: Game) => void;
   games: Game[];
   onRequestUpdate: (gameId: number) => void;
-  onStartDownload?: (game: Game) => void;
+  onStartDownload?: (game: Game, version: string) => void;
   onLaunchGame?: (gameTitle: string) => void;
 }
 
@@ -65,7 +65,7 @@ function StatusBadge({ status, current, latest }: { status: GameStatus; current:
   );
 }
 
-function GameCard({ game, onSelect, onRequestUpdate, onStartDownload, onLaunchGame }: { game: Game; onSelect: () => void; onRequestUpdate: () => void; onStartDownload?: () => void; onLaunchGame?: (gameTitle: string) => void }) {
+function GameCard({ game, onSelect, onRequestUpdate, onStartDownload, onLaunchGame }: { game: Game; onSelect: () => void; onRequestUpdate: () => void; onStartDownload?: (version: string) => void; onLaunchGame?: (gameTitle: string) => void }) {
   const [hovered, setHovered] = useState(false);
 
   const actionButton = () => {
@@ -86,7 +86,7 @@ function GameCard({ game, onSelect, onRequestUpdate, onStartDownload, onLaunchGa
         <button
           className="w-full flex items-center justify-center gap-2 py-2 rounded-lg transition-all duration-200"
           style={{ background: 'rgba(59,130,246,0.85)', color: '#fff', fontSize: '12px', fontWeight: 700, letterSpacing: '0.03em' }}
-          onClick={(e) => { e.stopPropagation(); onStartDownload ? onStartDownload() : onSelect(); }}
+          onClick={(e) => { e.stopPropagation(); onStartDownload ? onStartDownload(game.latestVersion) : onSelect(); }}
         >
           <Download size={12} />
           ACTUALIZAR A {game.latestVersion}
@@ -313,7 +313,7 @@ export function LibraryView({ onGameSelect, games, onRequestUpdate, onStartDownl
                 game={game}
                 onSelect={() => onGameSelect(game)}
                 onRequestUpdate={() => onRequestUpdate(game.id)}
-                onStartDownload={onStartDownload ? () => onStartDownload(game) : undefined}
+                onStartDownload={onStartDownload ? (version) => onStartDownload(game, version) : undefined}
                 onLaunchGame={onLaunchGame}
               />
             ))}

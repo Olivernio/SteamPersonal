@@ -1014,18 +1014,22 @@ export const CatalogManager: React.FC = () => {
                     <div style={{ padding: '14px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', display: 'flex', gap: '14px' }}>
                       <div style={{ width: '120px', height: '70px', borderRadius: '8px', overflow: 'hidden', backgroundColor: '#000', border: '1px solid rgba(255,255,255,0.1)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {bannerUrl ? (
-                          <img src={bannerUrl} alt="Banner" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => (e.currentTarget.style.display = 'none')} />
+                          <img src={bannerUrl.split('\n')[0].trim()} alt="Banner" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => (e.currentTarget.style.display = 'none')} />
                         ) : (
                           <Eye size={18} style={{ color: 'rgba(255,255,255,0.3)' }} />
                         )}
                       </div>
                       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '4px' }}>
-                        <label style={{ fontSize: '11px', color: '#A5B4FC', fontWeight: 700, letterSpacing: '0.05em' }}>FONDO (BANNER HD 16:9)</label>
-                        <input
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <label style={{ fontSize: '11px', color: '#A5B4FC', fontWeight: 700, letterSpacing: '0.05em' }}>FONDOS (BANNER HD 16:9)</label>
+                          <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)' }}>{bannerUrl.split('\n').filter(s => s.trim()).length} imgs</span>
+                        </div>
+                        <textarea
                           value={bannerUrl}
                           onChange={(e) => setBannerUrl(e.target.value)}
-                          placeholder="https://.../banner.jpg"
-                          style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', backgroundColor: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', color: '#E2E8F0', fontSize: '12px' }}
+                          placeholder="https://.../banner1.jpg&#10;https://.../banner2.jpg"
+                          rows={2}
+                          style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', backgroundColor: 'rgba(0,0,0,0.4)', border: '1px solid rgba(255,255,255,0.1)', color: '#E2E8F0', fontSize: '12px', resize: 'vertical' }}
                         />
                       </div>
                     </div>

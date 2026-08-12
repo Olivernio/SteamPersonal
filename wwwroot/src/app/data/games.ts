@@ -1,4 +1,4 @@
-export type GameStatus = 'updated' | 'update_available' | 'outdated';
+export type GameStatus = 'not_installed' | 'updated' | 'update_available' | 'outdated';
 
 export interface SystemRequirements {
   min: string;

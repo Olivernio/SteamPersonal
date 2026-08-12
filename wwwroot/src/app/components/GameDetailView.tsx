@@ -9,7 +9,7 @@ interface GameDetailViewProps {
   game: Game;
   onBack: () => void;
   onRequestUpdate: (gameId: number) => void;
-  onStartDownload?: (game: Game) => void;
+  onStartDownload?: (game: Game, version: string, customUrl?: string) => void;
   onLaunchGame?: (gameTitle: string) => void;
 }
 
@@ -45,7 +45,11 @@ const ExpandableText = ({ text, lines = 3 }: { text: string, lines?: number }) =
 };
 
 export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload, onLaunchGame }: GameDetailViewProps) {
-  const [selectedVersion, setSelectedVersion] = useState(game.currentVersion);
+  const [selectedVersion, setSelectedVersion] = useState(game.status === 'not_installed' ? game.latestVersion : game.currentVersion);
+  
+  useEffect(() => {
+    setSelectedVersion(game.status === 'not_installed' ? game.latestVersion : game.currentVersion);
+  }, [game.status, game.currentVersion, game.latestVersion]);
   const [versionOpen, setVersionOpen] = useState(false);
   const [requestSent, setRequestSent] = useState(false);
   const [requestCount, setRequestCount] = useState(game.requestCount);
@@ -58,6 +62,11 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   const [savegameInfo, setSavegameInfo] = useState<{ exists: boolean; sizeBytes: number; updatedAt: string; resolvedPath: string } | null>(null);
   const [backingUp, setBackingUp] = useState(false);
   const [restoring, setRestoring] = useState(false);
+
+  const handleDownload = () => {
+    const versionObj = game.availableVersions?.find(v => v.version === selectedVersion);
+    onStartDownload?.(game, selectedVersion, versionObj?.downloadUrl);
+  };
   const [savegameStatusMsg, setSavegameStatusMsg] = useState<string | null>(null);
 
   const [requestModalOpen, setRequestModalOpen] = useState(false);
@@ -175,7 +184,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   };
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    setIsScrolled(e.currentTarget.scrollTop >= 400);
+    setIsScrolled(e.currentTarget.scrollTop >= 520);
   };
 
   const handleRequestUpdate = async () => {
@@ -304,14 +313,13 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
         ) : game.status === 'update_available' ? (
           <div className="space-y-3">
             <button
-              onClick={() => onStartDownload?.(game)}
-              className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl transition-all duration-200"
+              onClick={handleDownload}
+              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl transition-all duration-200 cursor-pointer shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40 relative overflow-hidden group"
               style={{
-                background: 'linear-gradient(135deg, #1D4ED8, #3B82F6)',
-                boxShadow: '0 8px 24px rgba(59,130,246,0.4)',
+                background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
+                color: '#fff',
                 fontSize: '15px',
                 fontWeight: 700,
-                color: '#fff',
                 letterSpacing: '0.04em',
               }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)'; }}
@@ -333,6 +341,25 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
             >
               <Play size={14} fill="currentColor" />
               Jugar versión instalada
+            </button>
+          </div>
+        ) : game.status === 'not_installed' && (!!game.downloadUrl || (game.availableVersions && game.availableVersions.length > 0)) ? (
+          <div className="space-y-3">
+            <button
+              onClick={handleDownload}
+              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl transition-all duration-200 cursor-pointer shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40 relative overflow-hidden group"
+              style={{
+                background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
+                color: '#fff',
+                fontSize: '15px',
+                fontWeight: 700,
+                letterSpacing: '0.04em',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
+            >
+              <Download size={18} />
+              INSTALAR {game.latestVersion}
             </button>
           </div>
         ) : (
@@ -446,10 +473,9 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
       className="flex-1 overflow-y-auto h-full relative"
       style={{ backgroundColor: '#0B0E14' }}
     >
-      {/* Hero Banner (Steam Style) */}
-      <div className="relative overflow-hidden" style={{ height: '440px' }}>
+      <div className="relative overflow-hidden" style={{ height: '520px' }}>
         <DynamicBackground 
-          images={[game.banner, ...(game.screenshots || [])]} 
+          images={(game.banner || '').split('\n').map(s => s.trim()).filter(Boolean)} 
           enabled={enableDynamicBackgrounds}
           intervalMs={bgImageDurationMs}
           fadeMs={bgFadeDurationMs}
@@ -532,7 +558,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                 </button>
               ) : game.status === 'update_available' ? (
                 <button
-                  onClick={() => onStartDownload?.(game)}
+                  onClick={handleDownload}
                   className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
                   style={{
                     background: 'linear-gradient(135deg, #3B82F6, #1D4ED8)',
@@ -544,6 +570,21 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                 >
                   <Download size={16} />
                   ACTUALIZAR
+                </button>
+              ) : game.status === 'not_installed' && (!!game.downloadUrl || (game.availableVersions && game.availableVersions.length > 0)) ? (
+                <button
+                  onClick={handleDownload}
+                  className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
+                  style={{
+                    background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
+                    color: '#fff',
+                    fontSize: '14px',
+                    fontWeight: 800,
+                    letterSpacing: '0.06em',
+                  }}
+                >
+                  <Download size={16} />
+                  INSTALAR
                 </button>
               ) : (
                 <button
@@ -608,7 +649,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                 </button>
               ) : game.status === 'update_available' ? (
                 <button
-                  onClick={() => onStartDownload?.(game)}
+                  onClick={handleDownload}
                   className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
                   style={{
                     background: 'linear-gradient(135deg, #3B82F6, #1D4ED8)',
@@ -620,6 +661,21 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                 >
                   <Download size={16} />
                   ACTUALIZAR
+                </button>
+              ) : game.status === 'not_installed' && (!!game.downloadUrl || (game.availableVersions && game.availableVersions.length > 0)) ? (
+                <button
+                  onClick={handleDownload}
+                  className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
+                  style={{
+                    background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
+                    color: '#fff',
+                    fontSize: '14px',
+                    fontWeight: 800,
+                    letterSpacing: '0.06em',
+                  }}
+                >
+                  <Download size={16} />
+                  INSTALAR
                 </button>
               ) : (
                 <button
@@ -1187,7 +1243,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                                 <button
                                   onClick={() => {
                                     setSelectedVersion(item.version);
-                                    onStartDownload?.(game);
+                                    onStartDownload?.(game, item.version, item.downloadUrl);
                                   }}
                                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-indigo-600 transition-colors cursor-pointer"
                                   style={{ backgroundColor: '#6366F1', color: '#FFF' }}
