@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { Search, Play, Download, MessageSquare, Clock, ChevronDown, Filter } from 'lucide-react';
 import { Game, GAMES, GameStatus } from '../data/games';
 
-type FilterType = 'all' | 'installed' | 'outdated';
+type FilterType = 'all' | 'installed' | 'not_installed' | 'outdated';
 
 interface LibraryViewProps {
   onGameSelect: (game: Game) => void;
@@ -27,7 +27,7 @@ function StatusBadge({ status, current, latest }: { status: GameStatus; current:
         }}
       >
         <div className="w-1 h-1 rounded-full bg-white opacity-80" />
-        {current} · Actualizado
+        {current || latest} · Instalado
       </div>
     );
   }
@@ -48,6 +48,24 @@ function StatusBadge({ status, current, latest }: { status: GameStatus; current:
       </div>
     );
   }
+  if (status === 'not_installed') {
+    return (
+      <div
+        className="absolute top-2 right-2 px-1.5 py-0.5 rounded-md"
+        style={{
+          background: 'rgba(30,41,59,0.85)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          backdropFilter: 'blur(8px)',
+          fontSize: '9px',
+          fontWeight: 600,
+          color: '#94A3B8',
+          letterSpacing: '0.02em',
+        }}
+      >
+        No instalado
+      </div>
+    );
+  }
   return (
     <div
       className="absolute top-2 right-2 px-1.5 py-0.5 rounded-md"
@@ -60,7 +78,7 @@ function StatusBadge({ status, current, latest }: { status: GameStatus; current:
         letterSpacing: '0.02em',
       }}
     >
-      {current} · Sin update
+      {current || 'Sin instalar'} · Sin update
     </div>
   );
 }
@@ -68,12 +86,14 @@ function StatusBadge({ status, current, latest }: { status: GameStatus; current:
 function GameCard({ game, onSelect, onRequestUpdate, onStartDownload, onLaunchGame }: { game: Game; onSelect: () => void; onRequestUpdate: () => void; onStartDownload?: (version: string) => void; onLaunchGame?: (gameTitle: string) => void }) {
   const [hovered, setHovered] = useState(false);
 
+  const hasDownloadAvailable = Boolean(game.downloadUrl || (game.availableVersions && game.availableVersions.length > 0));
+
   const actionButton = () => {
     if (game.status === 'updated') {
       return (
         <button
-          className="w-full flex items-center justify-center gap-2 py-2 rounded-lg transition-all duration-200"
-          style={{ background: 'rgba(16,185,129,0.85)', color: '#fff', fontSize: '12px', fontWeight: 700, letterSpacing: '0.03em' }}
+          className="w-full flex items-center justify-center gap-2 py-2 rounded-lg transition-all duration-200 cursor-pointer shadow-md"
+          style={{ background: 'linear-gradient(135deg, #10B981, #059669)', color: '#fff', fontSize: '12px', fontWeight: 700, letterSpacing: '0.03em' }}
           onClick={(e) => { e.stopPropagation(); onLaunchGame?.(game.title); }}
         >
           <Play size={12} fill="currentColor" />
@@ -84,8 +104,8 @@ function GameCard({ game, onSelect, onRequestUpdate, onStartDownload, onLaunchGa
     if (game.status === 'update_available') {
       return (
         <button
-          className="w-full flex items-center justify-center gap-2 py-2 rounded-lg transition-all duration-200"
-          style={{ background: 'rgba(59,130,246,0.85)', color: '#fff', fontSize: '12px', fontWeight: 700, letterSpacing: '0.03em' }}
+          className="w-full flex items-center justify-center gap-2 py-2 rounded-lg transition-all duration-200 cursor-pointer shadow-md"
+          style={{ background: 'linear-gradient(135deg, #3B82F6, #1D4ED8)', color: '#fff', fontSize: '12px', fontWeight: 700, letterSpacing: '0.03em' }}
           onClick={(e) => { e.stopPropagation(); onStartDownload ? onStartDownload(game.latestVersion) : onSelect(); }}
         >
           <Download size={12} />
@@ -93,9 +113,21 @@ function GameCard({ game, onSelect, onRequestUpdate, onStartDownload, onLaunchGa
         </button>
       );
     }
+    if (game.status === 'not_installed' && hasDownloadAvailable) {
+      return (
+        <button
+          className="w-full flex items-center justify-center gap-2 py-2 rounded-lg transition-all duration-200 cursor-pointer shadow-md"
+          style={{ background: 'linear-gradient(135deg, #6366F1, #4F46E5)', color: '#fff', fontSize: '12px', fontWeight: 700, letterSpacing: '0.03em' }}
+          onClick={(e) => { e.stopPropagation(); onStartDownload ? onStartDownload(game.latestVersion) : onSelect(); }}
+        >
+          <Download size={12} />
+          INSTALAR {game.latestVersion}
+        </button>
+      );
+    }
     return (
       <button
-        className="w-full flex items-center justify-center gap-2 py-2 rounded-lg transition-all duration-200"
+        className="w-full flex items-center justify-center gap-2 py-2 rounded-lg transition-all duration-200 cursor-pointer shadow-md"
         style={{ background: 'rgba(249,115,22,0.85)', color: '#fff', fontSize: '12px', fontWeight: 700, letterSpacing: '0.03em' }}
         onClick={(e) => { e.stopPropagation(); onRequestUpdate(); }}
       >
@@ -184,13 +216,19 @@ export function LibraryView({ onGameSelect, games, onRequestUpdate, onStartDownl
   const [filter, setFilter] = useState<FilterType>('all');
   const [sortOpen, setSortOpen] = useState(false);
 
+  const isGameInstalled = (g: Game) =>
+    g.status === 'updated' ||
+    g.status === 'update_available' ||
+    Boolean(g.installedVersions && g.installedVersions.length > 0);
+
   const filteredGames = useMemo(() => {
     return games.filter((g) => {
       const matchSearch = g.title.toLowerCase().includes(search.toLowerCase()) ||
         g.developer.toLowerCase().includes(search.toLowerCase());
       const matchFilter =
         filter === 'all' ||
-        (filter === 'installed' && g.status === 'updated') ||
+        (filter === 'installed' && isGameInstalled(g)) ||
+        (filter === 'not_installed' && !isGameInstalled(g)) ||
         (filter === 'outdated' && (g.status === 'update_available' || g.status === 'outdated'));
       return matchSearch && matchFilter;
     });
@@ -198,8 +236,9 @@ export function LibraryView({ onGameSelect, games, onRequestUpdate, onStartDownl
 
   const counts = useMemo(() => ({
     all: games.length,
-    installed: games.filter((g) => g.status === 'updated').length,
-    outdated: games.filter((g) => g.status !== 'updated').length,
+    installed: games.filter(isGameInstalled).length,
+    not_installed: games.filter((g) => !isGameInstalled(g)).length,
+    outdated: games.filter((g) => g.status === 'update_available' || g.status === 'outdated').length,
   }), [games]);
 
   return (
@@ -213,7 +252,9 @@ export function LibraryView({ onGameSelect, games, onRequestUpdate, onStartDownl
           <h1 style={{ color: '#E2E8F0', fontSize: '20px', fontWeight: 700, letterSpacing: '-0.01em' }}>
             Mi Biblioteca
           </h1>
-          <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '12px' }}>{games.length} juegos instalados</p>
+          <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '12px' }}>
+            {counts.installed} de {games.length} juegos instalados
+          </p>
         </div>
 
         {/* Search */}
@@ -259,7 +300,8 @@ export function LibraryView({ onGameSelect, games, onRequestUpdate, onStartDownl
         {([
           { key: 'all', label: 'Todos', count: counts.all },
           { key: 'installed', label: 'Instalados', count: counts.installed },
-          { key: 'outdated', label: 'Desactualizados', count: counts.outdated },
+          { key: 'not_installed', label: 'Sin Instalar', count: counts.not_installed },
+          { key: 'outdated', label: 'Actualizaciones', count: counts.outdated },
         ] as { key: FilterType; label: string; count: number }[]).map((tab) => (
           <button
             key={tab.key}

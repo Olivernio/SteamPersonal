@@ -342,7 +342,15 @@ namespace SteamPersonal
                 {
                     var gamesArray = root.GetProperty("games").EnumerateArray();
                     var installedMap = new Dictionary<string, string>();
+                    var installations = new Dictionary<string, object>();
                     string juegosDir = Path.Combine(Directory.GetCurrentDirectory(), "Juegos");
+
+                    if (!Directory.Exists(juegosDir))
+                    {
+                        Directory.CreateDirectory(juegosDir);
+                    }
+
+                    var allJuegosFolders = Directory.GetDirectories(juegosDir);
 
                     foreach (var game in gamesArray)
                     {
@@ -351,27 +359,109 @@ namespace SteamPersonal
 
                         string safeTitle = string.Concat(title.Split(Path.GetInvalidFileNameChars())).Trim();
                         string gameDir = Path.Combine(juegosDir, safeTitle);
+                        
+                        var installedVersions = new List<string>();
+                        var pathsMap = new Dictionary<string, string>();
+
+                        // Check main folder: Juegos/<SafeTitle>
                         if (Directory.Exists(gameDir))
                         {
-                            string versionFile = Path.Combine(gameDir, "version.txt");
-                            if (File.Exists(versionFile))
+                            // 1. Check if there are version subdirectories (e.g. Juegos/<SafeTitle>/v1.0, v1.1)
+                            var subDirs = Directory.GetDirectories(gameDir);
+                            bool foundSubVersions = false;
+
+                            foreach (var subDir in subDirs)
                             {
-                                installedMap[title] = File.ReadAllText(versionFile).Trim();
+                                string? exeInSub = GameLauncherService.FindMainExecutable(subDir);
+                                if (!string.IsNullOrEmpty(exeInSub))
+                                {
+                                    string versionFile = Path.Combine(subDir, "version.txt");
+                                    string vName = File.Exists(versionFile)
+                                        ? File.ReadAllText(versionFile).Trim()
+                                        : Path.GetFileName(subDir);
+
+                                    if (!string.IsNullOrEmpty(vName) && !installedVersions.Contains(vName))
+                                    {
+                                        installedVersions.Add(vName);
+                                        pathsMap[vName] = subDir;
+                                        foundSubVersions = true;
+                                    }
+                                }
                             }
-                            else
+
+                            // 2. If no subversion directories with exe were found, check the main folder itself
+                            if (!foundSubVersions)
                             {
-                                installedMap[title] = "1.0.0";
+                                string? mainExe = GameLauncherService.FindMainExecutable(gameDir);
+                                if (!string.IsNullOrEmpty(mainExe))
+                                {
+                                    string versionFile = Path.Combine(gameDir, "version.txt");
+                                    string vName = File.Exists(versionFile)
+                                        ? File.ReadAllText(versionFile).Trim()
+                                        : "v1.0";
+
+                                    installedVersions.Add(vName);
+                                    pathsMap[vName] = gameDir;
+                                }
                             }
+                        }
+
+                        // Also check sibling folders: Juegos/<SafeTitle> (vX.Y) or Juegos/<SafeTitle> - vX.Y
+                        foreach (var siblingDir in allJuegosFolders)
+                        {
+                            string folderName = Path.GetFileName(siblingDir);
+                            if (folderName.StartsWith(safeTitle, StringComparison.OrdinalIgnoreCase) && !siblingDir.Equals(gameDir, StringComparison.OrdinalIgnoreCase))
+                            {
+                                string? sibExe = GameLauncherService.FindMainExecutable(siblingDir);
+                                if (!string.IsNullOrEmpty(sibExe))
+                                {
+                                    string versionFile = Path.Combine(siblingDir, "version.txt");
+                                    string vName = File.Exists(versionFile)
+                                        ? File.ReadAllText(versionFile).Trim()
+                                        : folderName.Substring(safeTitle.Length).Trim(' ', '-', '(', ')', '_');
+
+                                    if (string.IsNullOrEmpty(vName)) vName = "v1.0";
+
+                                    if (!installedVersions.Contains(vName))
+                                    {
+                                        installedVersions.Add(vName);
+                                        pathsMap[vName] = siblingDir;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (installedVersions.Count > 0)
+                        {
+                            string primaryVersion = installedVersions[installedVersions.Count - 1];
+                            installedMap[title] = primaryVersion;
+                            installations[title] = new
+                            {
+                                isInstalled = true,
+                                installedVersions = installedVersions,
+                                primaryVersion = primaryVersion,
+                                paths = pathsMap
+                            };
+                        }
+                        else
+                        {
+                            installations[title] = new
+                            {
+                                isInstalled = false,
+                                installedVersions = new string[0],
+                                primaryVersion = "",
+                                paths = new Dictionary<string, string>()
+                            };
                         }
                     }
 
                     var response = new
                     {
-                        action = "INSTALLATION_STATUS",
-                        installedMap = installedMap
+                        type = "INSTALLATION_STATUS",
+                        installedMap = installedMap,
+                        installations = installations
                     };
-                    string jsonData = System.Text.Json.JsonSerializer.Serialize(response);
-                    _webView.Invoke(new Action(() => SendToFrontend(jsonData)));
+                    _webView.Invoke(new Action(() => SendToFrontend(response)));
                 }
                 else if (action == "LAUNCH_GAME")
                 {
@@ -382,10 +472,40 @@ namespace SteamPersonal
                     string gameKey = root.TryGetProperty("gameKey", out var keyProp) ? keyProp.GetString() ?? "" : "";
                     string customSavePattern = root.TryGetProperty("savePattern", out var patProp) ? patProp.GetString() ?? "" : "";
                     string customPath = root.TryGetProperty("gamePath", out var pathProp) ? pathProp.GetString() ?? "" : "";
+                    string targetVersion = root.TryGetProperty("version", out var verProp) ? verProp.GetString() ?? "" : "";
 
-                    string gameFolder = !string.IsNullOrEmpty(customPath) && Directory.Exists(customPath)
-                        ? customPath
-                        : Path.Combine(Directory.GetCurrentDirectory(), "Juegos", safeTitle);
+                    string juegosDir = Path.Combine(Directory.GetCurrentDirectory(), "Juegos");
+                    string gameFolder = "";
+
+                    if (!string.IsNullOrEmpty(customPath) && Directory.Exists(customPath))
+                    {
+                        gameFolder = customPath;
+                    }
+                    else if (!string.IsNullOrEmpty(targetVersion))
+                    {
+                        // Check if version specific subfolder exists
+                        string versionSubFolder = Path.Combine(juegosDir, safeTitle, targetVersion);
+                        string versionSiblingFolder = Path.Combine(juegosDir, $"{safeTitle} ({targetVersion})");
+                        string versionDashFolder = Path.Combine(juegosDir, $"{safeTitle} - {targetVersion}");
+
+                        if (Directory.Exists(versionSubFolder) && GameLauncherService.FindMainExecutable(versionSubFolder) != null)
+                        {
+                            gameFolder = versionSubFolder;
+                        }
+                        else if (Directory.Exists(versionSiblingFolder) && GameLauncherService.FindMainExecutable(versionSiblingFolder) != null)
+                        {
+                            gameFolder = versionSiblingFolder;
+                        }
+                        else if (Directory.Exists(versionDashFolder) && GameLauncherService.FindMainExecutable(versionDashFolder) != null)
+                        {
+                            gameFolder = versionDashFolder;
+                        }
+                    }
+
+                    if (string.IsNullOrEmpty(gameFolder))
+                    {
+                        gameFolder = Path.Combine(juegosDir, safeTitle);
+                    }
 
                     // Auto-detect AppID for Monster Hunter Rise if not explicitly passed
                     if (appId == 0 && (gameTitle.Contains("Monster Hunter Rise", StringComparison.OrdinalIgnoreCase) || gameKey.Equals("mh_rise", StringComparison.OrdinalIgnoreCase)))

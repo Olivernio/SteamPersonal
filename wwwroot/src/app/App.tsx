@@ -84,7 +84,12 @@ export default function App() {
         case 'DOWNLOAD_COMPLETED':
           dispatchDownload({ type: 'COMPLETED' });
           const currentTitle = downloadStateRef.current?.gameTitle;
-          if (currentTitle) {
+          if (window.chrome?.webview) {
+            window.chrome.webview.postMessage({
+              action: 'CHECK_INSTALLATIONS',
+              games: games.map((g) => g.title),
+            });
+          } else if (currentTitle) {
             setGames((prev) =>
               prev.map((g) => (g.title === currentTitle ? { ...g, status: 'updated' } : g))
             );
@@ -109,14 +114,68 @@ export default function App() {
         case 'INSTALLATION_STATUS':
           setGames((prev) =>
             prev.map((g) => {
-              const installedVersion = msg.installedMap[g.title];
-              if (installedVersion) {
+              const installation = msg.installations?.[g.title];
+              const installedVersion = msg.installedMap?.[g.title];
+
+              if (installation && installation.isInstalled && installation.installedVersions.length > 0) {
+                const isUpdated =
+                  installation.installedVersions.includes(g.latestVersion) ||
+                  installation.primaryVersion === g.latestVersion;
+                return {
+                  ...g,
+                  currentVersion: installation.primaryVersion || g.latestVersion,
+                  installedVersions: installation.installedVersions,
+                  installedPaths: installation.paths,
+                  status: isUpdated ? 'updated' : 'update_available',
+                };
+              } else if (installedVersion) {
                 const isUpdated = installedVersion === g.latestVersion;
-                return { ...g, currentVersion: installedVersion, status: isUpdated ? 'updated' : 'update_available' };
+                return {
+                  ...g,
+                  currentVersion: installedVersion,
+                  installedVersions: [installedVersion],
+                  status: isUpdated ? 'updated' : 'update_available',
+                };
               }
-              return { ...g, status: 'not_installed' };
+              return {
+                ...g,
+                currentVersion: '',
+                installedVersions: [],
+                status: 'not_installed',
+              };
             })
           );
+          setSelectedGame((prev) => {
+            if (!prev) return null;
+            const installation = msg.installations?.[prev.title];
+            const installedVersion = msg.installedMap?.[prev.title];
+            if (installation && installation.isInstalled && installation.installedVersions.length > 0) {
+              const isUpdated =
+                installation.installedVersions.includes(prev.latestVersion) ||
+                installation.primaryVersion === prev.latestVersion;
+              return {
+                ...prev,
+                currentVersion: installation.primaryVersion || prev.latestVersion,
+                installedVersions: installation.installedVersions,
+                installedPaths: installation.paths,
+                status: isUpdated ? 'updated' : 'update_available',
+              };
+            } else if (installedVersion) {
+              const isUpdated = installedVersion === prev.latestVersion;
+              return {
+                ...prev,
+                currentVersion: installedVersion,
+                installedVersions: [installedVersion],
+                status: isUpdated ? 'updated' : 'update_available',
+              };
+            }
+            return {
+              ...prev,
+              currentVersion: '',
+              installedVersions: [],
+              status: 'not_installed',
+            };
+          });
           break;
       }
     });
@@ -190,8 +249,8 @@ export default function App() {
     setSelectedGame(null);
   }, []);
 
-  const handleLaunchGame = useCallback((gameTitle: string) => {
-    launchGame(gameTitle);
+  const handleLaunchGame = useCallback((gameTitle: string, version?: string, gamePath?: string, appId?: number, gameKey?: string, savePattern?: string) => {
+    launchGame(gameTitle, version, gamePath, appId, gameKey, savePattern);
   }, []);
 
   // Active download count for the sidebar badge

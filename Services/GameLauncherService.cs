@@ -86,7 +86,7 @@ namespace SteamPersonal.Services
             }
         }
 
-        private string? FindMainExecutable(string directory)
+        public static string? FindMainExecutable(string directory)
         {
             var exeFiles = Directory.GetFiles(directory, "*.exe", SearchOption.AllDirectories);
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ArrowLeft, Play, Download, MessageSquare, Gamepad2, Calendar, HardDrive, ChevronDown, Monitor, Clock, Star, Package, Cloud, Settings, Info, Heart, Award, Building2, Megaphone, Upload, RefreshCw, X, FolderCheck } from 'lucide-react';
 import { Game } from '../data/games';
 import { backupSavegame, restoreSavegame, getSavegameInfo, getAchievements, onWebViewMessage, formatBytes, WebViewMessage } from '../webview-bridge';
@@ -10,7 +10,7 @@ interface GameDetailViewProps {
   onBack: () => void;
   onRequestUpdate: (gameId: number) => void;
   onStartDownload?: (game: Game, version: string, customUrl?: string) => void;
-  onLaunchGame?: (gameTitle: string) => void;
+  onLaunchGame?: (gameTitle: string, version?: string, gamePath?: string, appId?: number, gameKey?: string, savePattern?: string) => void;
 }
 
 const ExpandableText = ({ text, lines = 3 }: { text: string, lines?: number }) => {
@@ -45,11 +45,25 @@ const ExpandableText = ({ text, lines = 3 }: { text: string, lines?: number }) =
 };
 
 export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload, onLaunchGame }: GameDetailViewProps) {
-  const [selectedVersion, setSelectedVersion] = useState(game.status === 'not_installed' ? game.latestVersion : game.currentVersion);
+  const installedList = game.installedVersions && game.installedVersions.length > 0
+    ? game.installedVersions
+    : (game.currentVersion ? [game.currentVersion] : []);
+  const hasInstalled = installedList.length > 0;
+  const isLatestInstalled = installedList.includes(game.latestVersion) || (game.currentVersion === game.latestVersion && hasInstalled);
+
+  const initialVersion = hasInstalled
+    ? (game.currentVersion || installedList[installedList.length - 1])
+    : (game.latestVersion || game.availableVersions?.[0]?.version || 'v1.0');
+
+  const [selectedVersion, setSelectedVersion] = useState(initialVersion);
   
   useEffect(() => {
-    setSelectedVersion(game.status === 'not_installed' ? game.latestVersion : game.currentVersion);
-  }, [game.status, game.currentVersion, game.latestVersion]);
+    setSelectedVersion(initialVersion);
+  }, [game.status, game.currentVersion, game.latestVersion, game.installedVersions]);
+
+  const isSelectedInstalled = Boolean(selectedVersion && installedList.includes(selectedVersion));
+  const hasDownload = Boolean(game.downloadUrl || (game.availableVersions && game.availableVersions.length > 0));
+
   const [versionOpen, setVersionOpen] = useState(false);
   const [requestSent, setRequestSent] = useState(false);
   const [requestCount, setRequestCount] = useState(game.requestCount);
@@ -63,9 +77,16 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   const [backingUp, setBackingUp] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
-  const handleDownload = () => {
-    const versionObj = game.availableVersions?.find(v => v.version === selectedVersion);
-    onStartDownload?.(game, selectedVersion, versionObj?.downloadUrl);
+  const handleLaunch = (versionToLaunch?: string) => {
+    const v = versionToLaunch || (isSelectedInstalled ? selectedVersion : (installedList[0] || game.currentVersion));
+    const path = v && game.installedPaths ? game.installedPaths[v] : undefined;
+    onLaunchGame?.(game.title, v, path, game.steamAppId || (game as any).appId, game.gameKey, game.savePathPattern);
+  };
+
+  const handleDownload = (ver?: string) => {
+    const targetVer = ver || selectedVersion;
+    const versionObj = game.availableVersions?.find(v => v.version === targetVer);
+    onStartDownload?.(game, targetVer, versionObj?.url || versionObj?.downloadUrl);
   };
   const [savegameStatusMsg, setSavegameStatusMsg] = useState<string | null>(null);
 
@@ -210,19 +231,47 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
     }
   };
 
-  const availableVersionsList = game.availableVersions && game.availableVersions.length > 0
-    ? game.availableVersions.map(v => {
+  const availableVersionsList = useMemo(() => {
+    const list: { label: string; value: string; isInstalled: boolean; url?: string }[] = [];
+    const installedSet = new Set(installedList);
+
+    if (game.availableVersions && game.availableVersions.length > 0) {
+      game.availableVersions.forEach((v) => {
+        const isInst = installedSet.has(v.version);
         const buildStr = showBuildId && v.notes ? ` (Build ${v.notes})` : '';
-        return {
-          label: `${v.version}${buildStr}${v.releaseDate ? ` - ${v.releaseDate}` : ''}`,
+        const tag = isInst ? ' (Instalada)' : '';
+        list.push({
+          label: `${v.version}${buildStr}${tag}${v.releaseDate ? ` - ${v.releaseDate}` : ''}`,
           value: v.version,
-          url: v.url
-        };
-      })
-    : [
-        { label: `${game.currentVersion} (Instalada)`, value: game.currentVersion, url: game.downloadUrl },
-        { label: `${game.latestVersion} (Servidor)`, value: game.latestVersion, url: game.downloadUrl },
-      ];
+          isInstalled: isInst,
+          url: v.url,
+        });
+      });
+    }
+
+    // Include installed versions that might not be in catalog
+    installedSet.forEach((instV) => {
+      if (instV && !list.some((item) => item.value === instV)) {
+        list.unshift({
+          label: `${instV} (Instalada)`,
+          value: instV,
+          isInstalled: true,
+          url: game.downloadUrl,
+        });
+      }
+    });
+
+    if (list.length === 0) {
+      list.push({
+        label: `${game.latestVersion || 'v1.0'}${hasInstalled ? ' (Instalada)' : ''}`,
+        value: game.latestVersion || 'v1.0',
+        isInstalled: hasInstalled,
+        url: game.downloadUrl,
+      });
+    }
+
+    return list;
+  }, [game.availableVersions, installedList, game.latestVersion, game.downloadUrl, showBuildId, hasInstalled]);
 
   const unifiedVersionsList = (() => {
     const map = new Map<string, {
@@ -231,14 +280,15 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
       notes?: string[];
       downloadUrl?: string;
       isAvailable: boolean;
+      isInstalled: boolean;
       buildId?: string;
     }>();
+
+    const installedSet = new Set(installedList);
 
     // Opcionalmente agregar eventos históricos (noticias) a la lista, pero filtrando publicaciones genéricas
     if (showAllVersions && game.changelog && game.changelog.length > 0) {
       game.changelog.forEach(c => {
-        // Heurística mejorada: solo versiones reales basadas en el nombre de versión o el TÍTULO de la nota.
-        // Evitamos buscar en el cuerpo para no falsos positivos con menciones de otros juegos.
         const versionRegex = /^(v|build|patch|ver)\.*\s*\d/i;
         const titleRegex = /(patch notes|release notes|hotfix|update \d|version \d|ver\.*\s*\d|patch \d)/i;
         
@@ -251,7 +301,8 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
             version: c.version,
             date: c.date,
             notes: c.notes,
-            isAvailable: false
+            isAvailable: false,
+            isInstalled: installedSet.has(c.version) || installedSet.has(vKey),
           });
         }
       });
@@ -268,15 +319,33 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
           notes: existing?.notes,
           downloadUrl: av.url,
           isAvailable: true,
+          isInstalled: installedSet.has(av.version) || installedSet.has(vKey),
           buildId: av.notes
         });
       });
     }
 
+    // Include installed versions
+    installedSet.forEach(instV => {
+      const vKey = instV.replace(/^(v|Build\s*)/i, '').trim();
+      if (!map.has(vKey)) {
+        map.set(vKey, {
+          version: instV,
+          isAvailable: true,
+          isInstalled: true,
+          downloadUrl: game.downloadUrl,
+        });
+      } else {
+        const item = map.get(vKey)!;
+        item.isInstalled = true;
+      }
+    });
+
     if (map.size === 0) {
       map.set(game.latestVersion, {
         version: game.latestVersion,
         isAvailable: true,
+        isInstalled: hasInstalled,
         downloadUrl: game.downloadUrl
       });
     }
@@ -284,36 +353,90 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
     return Array.from(map.values());
   })();
 
-  const versions = availableVersionsList;
-
   const renderActionPanel = () => {
     return (
       <div className="space-y-4">
         {/* Main Action Area */}
-        {game.status === 'updated' ? (
+        {hasInstalled ? (
           <div className="space-y-3">
-            <button
-              onClick={() => onLaunchGame?.(game.title)}
-              className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl transition-all duration-200 group"
-              style={{
-                background: 'linear-gradient(135deg, #059669, #10B981)',
-                boxShadow: '0 8px 24px rgba(16,185,129,0.4)',
-                fontSize: '16px',
-                fontWeight: 700,
-                color: '#fff',
-                letterSpacing: '0.05em',
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
-            >
-              <Play size={20} fill="currentColor" />
-              JUGAR
-            </button>
+            {/* If selected version is installed, Play is the primary button */}
+            {isSelectedInstalled ? (
+              <button
+                onClick={() => handleLaunch(selectedVersion)}
+                className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl transition-all duration-200 group cursor-pointer shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40"
+                style={{
+                  background: 'linear-gradient(135deg, #059669, #10B981)',
+                  fontSize: '16px',
+                  fontWeight: 700,
+                  color: '#fff',
+                  letterSpacing: '0.05em',
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)'; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
+              >
+                <Play size={20} fill="currentColor" />
+                JUGAR {installedList.length > 1 ? `(${selectedVersion})` : ''}
+              </button>
+            ) : (
+              /* If user selected an uninstalled version to download/install */
+              <button
+                onClick={() => handleDownload(selectedVersion)}
+                className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl transition-all duration-200 cursor-pointer shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40 relative overflow-hidden group"
+                style={{
+                  background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
+                  color: '#fff',
+                  fontSize: '15px',
+                  fontWeight: 700,
+                  letterSpacing: '0.04em',
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)'; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
+              >
+                <Download size={18} />
+                INSTALAR {selectedVersion}
+              </button>
+            )}
+
+            {/* If there's an update available in the catalog and it's not the installed latest */}
+            {!isLatestInstalled && isSelectedInstalled && (
+              <button
+                onClick={() => handleDownload(game.latestVersion)}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all duration-200 cursor-pointer hover:bg-indigo-600/30"
+                style={{
+                  backgroundColor: 'rgba(99,102,241,0.15)',
+                  border: '1px solid rgba(99,102,241,0.35)',
+                  color: '#A5B4FC',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                }}
+              >
+                <Download size={15} />
+                Actualizar a {game.latestVersion}
+              </button>
+            )}
+
+            {/* If user selected a non-installed version, allow playing the installed one easily */}
+            {!isSelectedInstalled && (
+              <button
+                onClick={() => handleLaunch(installedList[0])}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl transition-colors hover:bg-white/10 cursor-pointer"
+                style={{
+                  backgroundColor: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'rgba(255,255,255,0.85)',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                }}
+              >
+                <Play size={14} fill="currentColor" />
+                Jugar versión instalada ({installedList[0]})
+              </button>
+            )}
           </div>
-        ) : game.status === 'update_available' ? (
+        ) : hasDownload ? (
           <div className="space-y-3">
             <button
-              onClick={handleDownload}
+              onClick={() => handleDownload(selectedVersion)}
               className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl transition-all duration-200 cursor-pointer shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40 relative overflow-hidden group"
               style={{
                 background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
@@ -326,40 +449,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
               onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
             >
               <Download size={18} />
-              ACTUALIZAR A {game.latestVersion}
-            </button>
-            <button
-              onClick={() => onLaunchGame?.(game.title)}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl transition-colors hover:bg-white/10"
-              style={{
-                backgroundColor: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                color: 'rgba(255,255,255,0.8)',
-                fontSize: '13px',
-                fontWeight: 600,
-              }}
-            >
-              <Play size={14} fill="currentColor" />
-              Jugar versión instalada
-            </button>
-          </div>
-        ) : game.status === 'not_installed' && (!!game.downloadUrl || (game.availableVersions && game.availableVersions.length > 0)) ? (
-          <div className="space-y-3">
-            <button
-              onClick={handleDownload}
-              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl transition-all duration-200 cursor-pointer shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40 relative overflow-hidden group"
-              style={{
-                background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
-                color: '#fff',
-                fontSize: '15px',
-                fontWeight: 700,
-                letterSpacing: '0.04em',
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
-            >
-              <Download size={18} />
-              INSTALAR {game.latestVersion}
+              INSTALAR {selectedVersion || game.latestVersion}
             </button>
           </div>
         ) : (
@@ -393,20 +483,27 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
         <div className="space-y-2">
           <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
             <div>
-              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>Versión Instalada</div>
-              <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>{game.currentVersion || 'Ninguna'}</div>
+              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>
+                {installedList.length > 1 ? `Versiones Instaladas (${installedList.length})` : 'Versión Instalada'}
+              </div>
+              <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>
+                {installedList.length > 0 ? installedList.join(', ') : 'Ninguna'}
+              </div>
             </div>
-            {game.status === 'updated' && (
+            {hasInstalled && isLatestInstalled && (
                <div className="px-2 py-1 rounded-md" style={{ backgroundColor: 'rgba(16,185,129,0.15)', color: '#10B981', fontSize: '10px', fontWeight: 700 }}>Al Día</div>
             )}
-            {game.status === 'update_available' && (
-               <div className="px-2 py-1 rounded-md" style={{ backgroundColor: 'rgba(234,179,8,0.15)', color: '#EAB308', fontSize: '10px', fontWeight: 700 }}>Desactualizado</div>
+            {hasInstalled && !isLatestInstalled && (
+               <div className="px-2 py-1 rounded-md" style={{ backgroundColor: 'rgba(234,179,8,0.15)', color: '#EAB308', fontSize: '10px', fontWeight: 700 }}>Update Disponible</div>
+            )}
+            {!hasInstalled && (
+               <div className="px-2 py-1 rounded-md" style={{ backgroundColor: 'rgba(148,163,184,0.1)', color: '#94A3B8', fontSize: '10px', fontWeight: 600 }}>No Instalado</div>
             )}
           </div>
 
           <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
             <div>
-              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>Última de Steam</div>
+              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>Última de Steam / Servidor</div>
               <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>{game.latestVersion || 'No disponible'}</div>
             </div>
             <RefreshCw size={12} className="text-gray-500" />
@@ -416,7 +513,7 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
         {/* Change Version Dropdown */}
         <div className="mt-4 pt-2">
           <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '10px', fontWeight: 600, letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>
-            SELECCIONAR PARA DESCARGAR
+            SELECCIONAR VERSIÓN ({availableVersionsList.length})
           </label>
           <div className="relative">
             <button
@@ -429,7 +526,9 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                 fontSize: '13px',
               }}
             >
-              <span className="truncate pr-2 font-medium">{selectedVersion}</span>
+              <span className="truncate pr-2 font-medium">
+                {selectedVersion} {isSelectedInstalled ? '✓ (Instalada)' : ''}
+              </span>
               <ChevronDown size={14} style={{ color: 'rgba(255,255,255,0.4)', transform: versionOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', flexShrink: 0 }} />
             </button>
             {versionOpen && (
@@ -443,10 +542,10 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                   overflowY: 'auto'
                 }}
               >
-                {versions.map((v) => (
+                {availableVersionsList.map((v) => (
                   <button
                     key={v.value}
-                    className="w-full text-left px-3 py-2.5 transition-all duration-150 truncate"
+                    className="w-full text-left px-3 py-2.5 transition-all duration-150 truncate flex items-center justify-between"
                     style={{
                       color: selectedVersion === v.value ? '#A5B4FC' : 'rgba(255,255,255,0.7)',
                       fontSize: '12px',
@@ -456,7 +555,12 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                     onMouseEnter={(e) => { if (selectedVersion !== v.value) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.05)'; }}
                     onMouseLeave={(e) => { if (selectedVersion !== v.value) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'; }}
                   >
-                    {v.label}
+                    <span className="truncate">{v.label}</span>
+                    {v.isInstalled && (
+                      <span className="text-[10px] text-emerald-400 font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 ml-2 shrink-0">
+                        Instalada
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -541,9 +645,9 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
           <div className="flex items-center gap-4 min-w-0">
             {/* Primary Action Button */}
             <div className="flex items-center rounded-lg overflow-hidden shrink-0">
-              {game.status === 'updated' ? (
+              {hasInstalled && isSelectedInstalled ? (
                 <button
-                  onClick={() => onLaunchGame?.(game.title)}
+                  onClick={() => handleLaunch(selectedVersion)}
                   className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
                   style={{
                     background: 'linear-gradient(135deg, #10B981, #059669)',
@@ -554,14 +658,14 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                   }}
                 >
                   <Play size={16} fill="currentColor" />
-                  JUGAR
+                  JUGAR {installedList.length > 1 ? `(${selectedVersion})` : ''}
                 </button>
-              ) : game.status === 'update_available' ? (
+              ) : hasInstalled && !isSelectedInstalled ? (
                 <button
-                  onClick={handleDownload}
+                  onClick={() => handleDownload(selectedVersion)}
                   className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
                   style={{
-                    background: 'linear-gradient(135deg, #3B82F6, #1D4ED8)',
+                    background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
                     color: '#fff',
                     fontSize: '14px',
                     fontWeight: 800,
@@ -569,11 +673,11 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                   }}
                 >
                   <Download size={16} />
-                  ACTUALIZAR
+                  INSTALAR {selectedVersion}
                 </button>
-              ) : game.status === 'not_installed' && (!!game.downloadUrl || (game.availableVersions && game.availableVersions.length > 0)) ? (
+              ) : hasDownload ? (
                 <button
-                  onClick={handleDownload}
+                  onClick={() => handleDownload(selectedVersion)}
                   className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
                   style={{
                     background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
@@ -604,9 +708,10 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
               )}
 
               <button
+                onClick={() => setVersionOpen(!versionOpen)}
                 className="px-2.5 py-2.5 flex items-center justify-center transition-colors"
                 style={{
-                  backgroundColor: game.status === 'updated' ? '#047857' : game.status === 'update_available' ? '#1E40AF' : '#4338CA',
+                  backgroundColor: hasInstalled && isSelectedInstalled ? '#047857' : '#4338CA',
                   color: 'rgba(255,255,255,0.8)',
                   cursor: 'pointer'
                 }}
@@ -632,9 +737,9 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
           <div className="flex items-center gap-6">
             {/* Main Action Button (Play / Download / Update) */}
             <div className="flex items-center rounded-lg overflow-hidden shrink-0">
-              {game.status === 'updated' ? (
+              {hasInstalled && isSelectedInstalled ? (
                 <button
-                  onClick={() => onLaunchGame?.(game.title)}
+                  onClick={() => handleLaunch(selectedVersion)}
                   className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
                   style={{
                     background: 'linear-gradient(135deg, #10B981, #059669)',
@@ -645,14 +750,14 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                   }}
                 >
                   <Play size={16} fill="currentColor" />
-                  JUGAR
+                  JUGAR {installedList.length > 1 ? `(${selectedVersion})` : ''}
                 </button>
-              ) : game.status === 'update_available' ? (
+              ) : hasInstalled && !isSelectedInstalled ? (
                 <button
-                  onClick={handleDownload}
+                  onClick={() => handleDownload(selectedVersion)}
                   className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
                   style={{
-                    background: 'linear-gradient(135deg, #3B82F6, #1D4ED8)',
+                    background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
                     color: '#fff',
                     fontSize: '14px',
                     fontWeight: 800,
@@ -660,11 +765,11 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                   }}
                 >
                   <Download size={16} />
-                  ACTUALIZAR
+                  INSTALAR {selectedVersion}
                 </button>
-              ) : game.status === 'not_installed' && (!!game.downloadUrl || (game.availableVersions && game.availableVersions.length > 0)) ? (
+              ) : hasDownload ? (
                 <button
-                  onClick={handleDownload}
+                  onClick={() => handleDownload(selectedVersion)}
                   className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
                   style={{
                     background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
@@ -695,9 +800,10 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
               )}
 
               <button
+                onClick={() => setVersionOpen(!versionOpen)}
                 className="px-2.5 py-2.5 flex items-center justify-center transition-colors"
                 style={{
-                  backgroundColor: game.status === 'updated' ? '#047857' : game.status === 'update_available' ? '#1E40AF' : '#4338CA',
+                  backgroundColor: hasInstalled && isSelectedInstalled ? '#047857' : '#4338CA',
                   color: 'rgba(255,255,255,0.8)',
                   cursor: 'pointer'
                 }}
@@ -1209,19 +1315,33 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                               <span
                                 className="px-2.5 py-1 rounded-lg font-bold text-xs"
                                 style={{
-                                  backgroundColor: item.isAvailable ? '#6366F1' : 'rgba(255,255,255,0.1)',
+                                  backgroundColor: item.isInstalled ? '#10B981' : item.isAvailable ? '#6366F1' : 'rgba(255,255,255,0.1)',
                                   color: '#FFF'
                                 }}
                               >
                                 {item.version.startsWith('v') ? item.version : `v${item.version}`}
                               </span>
 
-                              {item.isAvailable && (
+                              {item.isInstalled ? (
                                 <span
                                   className="px-2 py-0.5 rounded text-[10px] font-semibold"
                                   style={{ backgroundColor: 'rgba(16,185,129,0.15)', color: '#10B981' }}
                                 >
+                                  Instalada en el equipo
+                                </span>
+                              ) : item.isAvailable ? (
+                                <span
+                                  className="px-2 py-0.5 rounded text-[10px] font-semibold"
+                                  style={{ backgroundColor: 'rgba(99,102,241,0.15)', color: '#818CF8' }}
+                                >
                                   Disponible para Descargar
+                                </span>
+                              ) : (
+                                <span
+                                  className="px-2 py-0.5 rounded text-[10px] font-semibold"
+                                  style={{ backgroundColor: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.4)' }}
+                                >
+                                  No disponible en servidor
                                 </span>
                               )}
 
@@ -1239,17 +1359,26 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
                                 </span>
                               )}
 
-                              {item.isAvailable ? (
+                              {item.isInstalled ? (
+                                <button
+                                  onClick={() => handleLaunch(item.version)}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 cursor-pointer shadow-md hover:scale-105"
+                                  style={{ backgroundColor: '#10B981', color: '#FFF' }}
+                                >
+                                  <Play size={13} fill="currentColor" />
+                                  <span>Jugar esta versión</span>
+                                </button>
+                              ) : item.isAvailable ? (
                                 <button
                                   onClick={() => {
                                     setSelectedVersion(item.version);
-                                    onStartDownload?.(game, item.version, item.downloadUrl);
+                                    handleDownload(item.version);
                                   }}
                                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold hover:bg-indigo-600 transition-colors cursor-pointer"
                                   style={{ backgroundColor: '#6366F1', color: '#FFF' }}
                                 >
                                   <Download size={13} />
-                                  <span>Descargar</span>
+                                  <span>Descargar e Instalar</span>
                                 </button>
                               ) : isRequested ? (
                                 <span

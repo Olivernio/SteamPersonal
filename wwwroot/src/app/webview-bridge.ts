@@ -102,6 +102,19 @@ export interface AchievementsDataResultMessage {
   }[];
 }
 
+export interface InstallationInfo {
+  isInstalled: boolean;
+  installedVersions: string[];
+  primaryVersion: string;
+  paths?: Record<string, string>;
+}
+
+export interface InstallationStatusMessage {
+  type: 'INSTALLATION_STATUS';
+  installedMap: Record<string, string>;
+  installations?: Record<string, InstallationInfo>;
+}
+
 export type WebViewMessage =
   | DownloadProgressMessage
   | DownloadCompletedMessage
@@ -113,7 +126,8 @@ export type WebViewMessage =
   | SavegameRestoreResultMessage
   | SavegameInfoResultMessage
   | AchievementUnlockedMessage
-  | AchievementsDataResultMessage;
+  | AchievementsDataResultMessage
+  | InstallationStatusMessage;
 
 // ── Send commands to C# backend ──────────────────────────────
 
@@ -127,8 +141,8 @@ export function sendCommand(action: string, payload?: Record<string, unknown>): 
 }
 
 // Convenience functions matching the C# OnWebMessageReceived handler
-export const startDownload  = (url: string, gameTitle?: string) => sendCommand('START_DOWNLOAD', { url, gameTitle });
-export const launchGame     = (gameTitle: string) => sendCommand('LAUNCH_GAME', { gameTitle });
+export const startDownload  = (url: string, gameTitle?: string, version?: string) => sendCommand('START_DOWNLOAD', { url, gameTitle, version });
+export const launchGame     = (gameTitle: string, version?: string, gamePath?: string, appId?: number, gameKey?: string, savePattern?: string) => sendCommand('LAUNCH_GAME', { gameTitle, version, gamePath, appId, gameKey, savePattern });
 export const pauseDownload  = () => sendCommand('PAUSE_DOWNLOAD');
 export const resumeDownload = () => sendCommand('RESUME_DOWNLOAD');
 export const cancelDownload = () => sendCommand('CANCEL_DOWNLOAD');

@@ -32,6 +32,8 @@ export interface Game {
   screenshots: string[];
   status: GameStatus;
   currentVersion: string;
+  installedVersions?: string[];
+  installedPaths?: Record<string, string>;
   latestVersion: string;
   hoursPlayed: number;
   requirements: SystemRequirements;
@@ -70,8 +72,9 @@ export const GAMES: Game[] = [
     screenshots: [
       'https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
     ],
-    status: 'update_available',
-    currentVersion: 'v1.0',
+    status: 'not_installed',
+    currentVersion: '',
+    installedVersions: [],
     latestVersion: 'v1.1 (Portable)',
     hoursPlayed: 0,
     requirements: {
@@ -108,8 +111,9 @@ export const GAMES: Game[] = [
       'https://images.unsplash.com/photo-1774060526589-ef13301f6e17?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
       'https://images.unsplash.com/photo-1698450998458-0bc1045788a1?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
     ],
-    status: 'updated',
-    currentVersion: 'v2.12',
+    status: 'not_installed',
+    currentVersion: '',
+    installedVersions: [],
     latestVersion: 'v2.12',
     hoursPlayed: 147.3,
     requirements: {
@@ -155,8 +159,9 @@ export const GAMES: Game[] = [
       'https://images.unsplash.com/photo-1672872476232-da16b45c9001?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
       'https://images.unsplash.com/photo-1642345843526-6279c8880a49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
     ],
-    status: 'update_available',
-    currentVersion: 'v2.12',
+    status: 'not_installed',
+    currentVersion: '',
+    installedVersions: [],
     latestVersion: 'v2.13',
     hoursPlayed: 89.1,
     requirements: {
@@ -204,8 +209,9 @@ export const GAMES: Game[] = [
       'https://images.unsplash.com/photo-1762008387452-25fe91ab3f90?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
       'https://images.unsplash.com/photo-1640903581708-8d491706515b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
     ],
-    status: 'outdated',
-    currentVersion: 'v2.12',
+    status: 'not_installed',
+    currentVersion: '',
+    installedVersions: [],
     latestVersion: 'v2.13',
     hoursPlayed: 34.7,
     requirements: {
@@ -251,8 +257,9 @@ export const GAMES: Game[] = [
       'https://images.unsplash.com/photo-1774836967692-11fb50666964?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
       'https://images.unsplash.com/photo-1775171440118-a3306020fe5a?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
     ],
-    status: 'updated',
-    currentVersion: 'v1.8',
+    status: 'not_installed',
+    currentVersion: '',
+    installedVersions: [],
     latestVersion: 'v1.8',
     hoursPlayed: 312.5,
     requirements: {
@@ -293,8 +300,9 @@ export const GAMES: Game[] = [
       'https://images.unsplash.com/photo-1535391879778-3bae11d29a24?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
       'https://images.unsplash.com/photo-1600748338443-f7ea1054ed6b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
     ],
-    status: 'update_available',
-    currentVersion: 'v1.4',
+    status: 'not_installed',
+    currentVersion: '',
+    installedVersions: [],
     latestVersion: 'v1.5',
     hoursPlayed: 56.8,
     requirements: {
@@ -340,8 +348,9 @@ export const GAMES: Game[] = [
       'https://images.unsplash.com/photo-1642345843526-6279c8880a49?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
       'https://images.unsplash.com/photo-1600748338443-f7ea1054ed6b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
     ],
-    status: 'updated',
-    currentVersion: 'v3.0',
+    status: 'not_installed',
+    currentVersion: '',
+    installedVersions: [],
     latestVersion: 'v3.0',
     hoursPlayed: 228.9,
     requirements: {
@@ -382,8 +391,9 @@ export const GAMES: Game[] = [
       'https://images.unsplash.com/photo-1698450998458-0bc1045788a1?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
       'https://images.unsplash.com/photo-1774836967692-11fb50666964?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
     ],
-    status: 'outdated',
-    currentVersion: 'v1.1',
+    status: 'not_installed',
+    currentVersion: '',
+    installedVersions: [],
     latestVersion: 'v1.2',
     hoursPlayed: 14.2,
     requirements: {
@@ -429,8 +439,9 @@ export const GAMES: Game[] = [
       'https://images.unsplash.com/photo-1775171440118-a3306020fe5a?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
       'https://images.unsplash.com/photo-1780811775368-efbc581b3bcb?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=600',
     ],
-    status: 'update_available',
-    currentVersion: 'v4.2',
+    status: 'not_installed',
+    currentVersion: '',
+    installedVersions: [],
     latestVersion: 'v4.3',
     hoursPlayed: 423.1,
     requirements: {
