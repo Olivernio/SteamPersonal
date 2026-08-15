@@ -35,7 +35,14 @@ public class SteamEventsClient(HttpClient http, ILogger<SteamEventsClient> logge
             foreach (var item in eventsArr.EnumerateArray())
             {
                 int eventType = item.TryGetProperty("event_type", out var et) ? et.GetInt32() : -1;
-                if (eventType != -1 && eventType != 12 && eventType != 14 && eventType != 28 && eventType != 34) // 28 is common for updates
+                string? buildId = ExtractBuildIdFromJsonData(item);
+
+                // Steam Partner Event Types:
+                // 28 = k_ECommunityEventGameUpdate / Major Update
+                // 34 = k_ECommunityEventSmallUpdate / Minor Update, Patch, Hotfix
+                // Exclude general community news (12), dev blog/merch (14), streams, discounts, etc.
+                bool isGameUpdate = eventType == 28 || eventType == 34 || !string.IsNullOrEmpty(buildId);
+                if (!isGameUpdate)
                     continue;
 
                 string title = item.TryGetProperty("event_name", out var t) ? t.GetString() ?? "" : "";
@@ -48,8 +55,6 @@ public class SteamEventsClient(HttpClient http, ILogger<SteamEventsClient> logge
                 
                 long postTime = item.TryGetProperty("rtime32_start_time", out var pt) ? pt.GetInt64() : 0;
                 string? eventId = item.TryGetProperty("gid", out var gid) ? gid.GetString() : null;
-
-                string? buildId = ExtractBuildIdFromJsonData(item);
 
                 list.Add(new SteamEventRaw
                 {
@@ -119,20 +124,45 @@ public class SteamEventsClient(HttpClient http, ILogger<SteamEventsClient> logge
 
     private static string? ExtractBuildIdFromJsonData(JsonElement item)
     {
-        if (!item.TryGetProperty("jsondata", out var js) || string.IsNullOrEmpty(js.GetString()))
-            return null;
+        // 1. Direct property on event item
+        if (item.TryGetProperty("build_id", out var bid1))
+        {
+            var str = bid1.GetString() ?? bid1.GetRawText();
+            if (!string.IsNullOrEmpty(str) && str != "0") return str.Trim('"', ' ');
+        }
 
-        try
+        if (item.TryGetProperty("buildid", out var bid2))
         {
-            using var jsDoc = JsonDocument.Parse(js.GetString()!);
-            return jsDoc.RootElement.TryGetProperty("build_id", out var bid)
-                ? bid.GetString() ?? bid.GetRawText()
-                : null;
+            var str = bid2.GetString() ?? bid2.GetRawText();
+            if (!string.IsNullOrEmpty(str) && str != "0") return str.Trim('"', ' ');
         }
-        catch
+
+        // 2. jsondata property (object or serialized json string)
+        if (item.TryGetProperty("jsondata", out var js))
         {
-            return null;
+            try
+            {
+                if (js.ValueKind == JsonValueKind.Object)
+                {
+                    if (js.TryGetProperty("build_id", out var b1)) return (b1.GetString() ?? b1.GetRawText()).Trim('"', ' ');
+                    if (js.TryGetProperty("buildid", out var b2)) return (b2.GetString() ?? b2.GetRawText()).Trim('"', ' ');
+                    if (js.TryGetProperty("published_build_id", out var b3)) return (b3.GetString() ?? b3.GetRawText()).Trim('"', ' ');
+                }
+                else if (js.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(js.GetString()))
+                {
+                    using var jsDoc = JsonDocument.Parse(js.GetString()!);
+                    if (jsDoc.RootElement.TryGetProperty("build_id", out var b1)) return (b1.GetString() ?? b1.GetRawText()).Trim('"', ' ');
+                    if (jsDoc.RootElement.TryGetProperty("buildid", out var b2)) return (b2.GetString() ?? b2.GetRawText()).Trim('"', ' ');
+                    if (jsDoc.RootElement.TryGetProperty("published_build_id", out var b3)) return (b3.GetString() ?? b3.GetRawText()).Trim('"', ' ');
+                }
+            }
+            catch
+            {
+                // ignore json parsing errors
+            }
         }
+
+        return null;
     }
 
     private static string StripBbCode(string input)

@@ -186,6 +186,9 @@ ADD CONSTRAINT uq_game_version UNIQUE (game_id, version_name);
 -- 4. Crear políticas RLS para 'game_versions'
 ALTER TABLE game_versions ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Public can read game versions" ON game_versions FOR SELECT USING (true);
+CREATE POLICY "Permitir insercion de game_versions a administradores" ON game_versions FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "Permitir edicion de game_versions a administradores" ON game_versions FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Permitir eliminacion de game_versions a administradores" ON game_versions FOR DELETE TO authenticated USING (true);
 
 -- 5. Crear tabla del catálogo maestro de DLCs
 CREATE TABLE dlcs (
@@ -212,3 +215,10 @@ ALTER TABLE game_version_dlcs ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Public can read game_version_dlcs" ON game_version_dlcs FOR SELECT USING (true);
 CREATE POLICY "Permitir insercion de game_version_dlcs a admin" ON game_version_dlcs FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "Permitir eliminacion de game_version_dlcs a admin" ON game_version_dlcs FOR DELETE TO authenticated USING (true);
+
+-- 7. Consulta de Limpieza / Sanitización de Versiones Basura (Opcional si quedaron eventos automáticos con fechas)
+-- Elimina versiones automáticas que solo tienen nombre 'Update YYYY-MM-DD' o noticias sin enlace de descarga:
+-- DELETE FROM game_versions
+-- WHERE source = 'steam_event'
+--   AND (download_url IS NULL OR download_url = '')
+--   AND version_name ~* '^Update\s+\d{4}-\d{2}-\d{2}$';

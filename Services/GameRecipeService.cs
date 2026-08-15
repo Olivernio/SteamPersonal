@@ -26,7 +26,43 @@ namespace SteamPersonal.Services
                 string safeTitle = string.Concat(recipe.Title.Split(Path.GetInvalidFileNameChars())).Trim();
                 if (string.IsNullOrWhiteSpace(safeTitle)) safeTitle = "JuegoDescargado";
 
-                string installDir = Path.Combine(Directory.GetCurrentDirectory(), "Juegos", safeTitle);
+                string juegosDir = Path.Combine(Directory.GetCurrentDirectory(), "Juegos");
+                Directory.CreateDirectory(juegosDir);
+
+                string baseDir = Path.Combine(juegosDir, safeTitle);
+                string versionTag = recipe.LatestOfficialVersion?.Trim() ?? "";
+
+                string installDir;
+                if (!string.IsNullOrEmpty(versionTag))
+                {
+                    string existingVerFile = Path.Combine(baseDir, "version.txt");
+                    if (Directory.Exists(baseDir) && File.Exists(existingVerFile))
+                    {
+                        string currentBaseVer = File.ReadAllText(existingVerFile).Trim();
+                        if (!string.Equals(currentBaseVer, versionTag, StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Another version is already installed in the base folder -> use isolated folder for this version
+                            installDir = Path.Combine(juegosDir, $"{safeTitle} ({versionTag})");
+                        }
+                        else
+                        {
+                            installDir = baseDir;
+                        }
+                    }
+                    else if (Directory.Exists(baseDir) && Directory.GetFileSystemEntries(baseDir).Length > 0)
+                    {
+                        installDir = Path.Combine(juegosDir, $"{safeTitle} ({versionTag})");
+                    }
+                    else
+                    {
+                        installDir = baseDir;
+                    }
+                }
+                else
+                {
+                    installDir = baseDir;
+                }
+
                 Directory.CreateDirectory(installDir);
 
                 int totalSteps = recipe.Steps.Count;
@@ -72,6 +108,16 @@ namespace SteamPersonal.Services
                             await ExecuteApplyCrackAsync(step, installDir);
                             break;
 
+                        case "move_folder":
+                        case "copy_folder":
+                            await ExecuteMoveFolderAsync(step, installDir);
+                            break;
+
+                        case "cleanup":
+                        case "delete_files":
+                            await ExecuteCleanupAsync(step, installDir);
+                            break;
+
                         case "add_defender_exclusion":
                             await ExecuteAddDefenderExclusionAsync(step, installDir);
                             break;
@@ -88,6 +134,7 @@ namespace SteamPersonal.Services
                     OnStepProgress(i + 1, totalSteps, step.Action, desc, "completed");
                 }
 
+                // Always write version.txt in the installed version folder
                 if (!string.IsNullOrEmpty(recipe.LatestOfficialVersion))
                 {
                     File.WriteAllText(Path.Combine(installDir, "version.txt"), recipe.LatestOfficialVersion);
@@ -119,6 +166,65 @@ namespace SteamPersonal.Services
                     string destFile = Path.Combine(target, Path.GetFileName(source));
                     Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
                     File.Copy(source, destFile, true);
+                }
+            });
+        }
+
+        private async Task ExecuteMoveFolderAsync(RecipeStep step, string installDir)
+        {
+            await Task.Run(() =>
+            {
+                string source = ResolvePath(step.SourceFolder, installDir);
+                string target = ResolvePath(step.TargetFolder, installDir);
+
+                if (Directory.Exists(source))
+                {
+                    Directory.CreateDirectory(target);
+                    foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+                    {
+                        string relative = Path.GetRelativePath(source, file);
+                        string dest = Path.Combine(target, relative);
+                        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                        File.Move(file, dest, true);
+                    }
+                    try { Directory.Delete(source, true); } catch { }
+                }
+                else if (File.Exists(source))
+                {
+                    string destFile = Path.Combine(target, Path.GetFileName(source));
+                    Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
+                    File.Move(source, destFile, true);
+                }
+            });
+        }
+
+        private async Task ExecuteCleanupAsync(RecipeStep step, string installDir)
+        {
+            await Task.Run(() =>
+            {
+                string target = ResolvePath(step.Path, installDir);
+
+                // If path has wildcards (e.g. *.url or *.nfo)
+                if (target.Contains('*') || target.Contains('?'))
+                {
+                    string dir = Path.GetDirectoryName(target) ?? installDir;
+                    string pattern = Path.GetFileName(target);
+
+                    if (Directory.Exists(dir))
+                    {
+                        foreach (var file in Directory.GetFiles(dir, pattern, SearchOption.AllDirectories))
+                        {
+                            try { File.Delete(file); } catch { }
+                        }
+                    }
+                }
+                else if (Directory.Exists(target))
+                {
+                    try { Directory.Delete(target, true); } catch { }
+                }
+                else if (File.Exists(target))
+                {
+                    try { File.Delete(target); } catch { }
                 }
             });
         }

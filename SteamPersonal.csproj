@@ -9,6 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="DiscUtils.Iso9660" Version="0.16.13" />
+    <PackageReference Include="DiscUtils.Udf" Version="0.16.13" />
     <PackageReference Include="SharpCompress" Version="0.50.3" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
     <PackageReference Include="SteamKit2" Version="3.4.0" />
@@ -19,10 +21,12 @@
     <Compile Remove="SteamPersonal.SyncWorker\**" />
     <None Remove="CodigoDeApoyo\**" />
     <None Remove="SteamPersonal.SyncWorker\**" />
+    <None Remove="wwwroot\node_modules\**" />
+    <None Remove="admin-panel\**" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="wwwroot\**\*">
+    <None Update="wwwroot\dist\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

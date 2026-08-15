@@ -5,6 +5,11 @@ const SUPABASE_ANON_KEY = import.meta.env.SUPABASE_ANON_KEY || '';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+export interface DownloadMirror {
+  provider: string;
+  url: string;
+}
+
 export interface DlcItem {
   id?: string;
   game_id?: string;
@@ -13,9 +18,20 @@ export interface DlcItem {
 }
 
 export interface DbGameVersion {
-  id: string;
+  id?: string;
   game_id: string;
   version_name: string;
+  build_id?: string;
+  release_date?: string;
+  download_url?: string;
+  is_available?: boolean;
+  changelog_title?: string;
+  changelog_body?: string;
+  source?: string;
+  event_id?: string;
+  created_at?: string;
+  updated_at?: string;
+  mirrors?: DownloadMirror[];
 }
 
 export interface DbGame {
@@ -36,7 +52,7 @@ export interface DbGame {
   save_path_pattern?: string;
   description?: string;
   latest_official_version: string;
-  size_bytes: number;
+  size_bytes?: number;
   download_url: string;
   executable_relative_path: string;
   is_active: boolean;
@@ -63,3 +79,41 @@ export interface DbRecipe {
   game_id: string;
   steps: RecipeStep[];
 }
+
+export const parseMirrors = (raw?: string): DownloadMirror[] => {
+  if (!raw || !raw.trim()) return [];
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.map((m: any) => ({
+          provider: typeof m === 'object' && m.provider ? m.provider : 'Servidor',
+          url: typeof m === 'object' && m.url ? m.url : String(m),
+        })).filter(m => m.url.trim() !== '');
+      }
+    } catch {
+      // Fallback
+    }
+  }
+  return trimmed
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((line, idx) => {
+      if (line.includes('|')) {
+        const [prov, url] = line.split('|');
+        return { provider: prov.trim(), url: url.trim() };
+      }
+      return { provider: idx === 0 ? 'Principal' : `Mirror ${idx + 1}`, url: line };
+    });
+};
+
+export const serializeMirrors = (mirrors: DownloadMirror[]): string => {
+  const clean = mirrors.filter(m => m.url && m.url.trim() !== '');
+  if (clean.length === 0) return '';
+  if (clean.length === 1 && (clean[0].provider === 'Principal' || !clean[0].provider)) {
+    return clean[0].url;
+  }
+  return JSON.stringify(clean);
+};

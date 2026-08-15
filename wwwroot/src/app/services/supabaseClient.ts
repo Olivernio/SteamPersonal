@@ -126,46 +126,98 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
       const changelog: any[] = [];
 
       versions.forEach((v: any) => {
-        // Filtrar Versiones Técnicas
-        if (v.build_id) {
-          availableVersions.push({
-            id: v.id,
-            version: v.version_name || v.changelog_title || 'Update',
-            url: v.download_url || row.download_url || '',
-            notes: v.build_id,
-            releaseDate: v.release_date ? new Date(v.release_date).toISOString().split('T')[0] : ''
-          });
+        let vUrl = v.download_url || '';
+        if (typeof vUrl === 'string' && vUrl.trim().startsWith('[') && vUrl.trim().endsWith(']')) {
+          try {
+            const parsed = JSON.parse(vUrl.trim());
+            if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].url) {
+              vUrl = parsed[0].url;
+            }
+          } catch {
+            // fallback
+          }
         }
 
-        // Filtrar Changelog / Notas de parche
-        if (v.changelog_body || v.changelog_title) {
-          // Remover etiquetas BBCode/HTML simples para que se vea más limpio
-          let cleanBody = v.changelog_body || '';
-          cleanBody = cleanBody.replace(/\[\/?(b|i|u|url|img)\]/gi, '');
-          
-          changelog.push({
-            version: v.version_name || v.changelog_title || 'Update',
-            date: v.release_date ? new Date(v.release_date).toISOString().split('T')[0] : '',
-            notes: [v.changelog_title, ...(cleanBody ? [cleanBody] : [])]
-          });
+        let cleanBody = v.changelog_body || '';
+        cleanBody = cleanBody.replace(/\[\/?(b|i|u|url|img)\]/gi, '').trim();
+
+        const entryNotes: string[] = [];
+        if (v.changelog_title && v.changelog_title.trim()) {
+          entryNotes.push(v.changelog_title.trim());
+        }
+        if (cleanBody) {
+          entryNotes.push(cleanBody);
+        }
+
+        // 1. SIEMPRE agregar a changelog (Notas de parche y comentarios de la comunidad para la pestaña 'Detalles')
+        changelog.push({
+          version: v.changelog_title || v.version_name || 'Actualización / Anuncio',
+          date: v.release_date ? new Date(v.release_date).toISOString().split('T')[0] : '',
+          notes: entryNotes.length > 0 ? entryNotes : [v.version_name || 'Actualización de Steam'],
+        });
+
+        // 2. Extracción de versión real para la pestaña 'Versiones' y selector
+        const rawVer = (v.version_name || '').trim();
+        const hasDl = Boolean(vUrl && vUrl.trim() !== '');
+
+        // Verificar si es un nombre basado en fecha (ej: 'Update 2026-07-15')
+        const isDatePlaceholder = /^update\s+\d{4}[-\/\.]\d{2}[-\/\.]\d{2}/i.test(rawVer) || /^\d{4}[-\/\.]\d{2}[-\/\.]\d{2}$/.test(rawVer);
+
+        let realVersionName: string | null = null;
+
+        if (hasDl) {
+          // Si tiene enlace de descarga asignado por el admin, siempre se conserva
+          realVersionName = rawVer;
+        } else if (!isDatePlaceholder) {
+          // Si no es fecha y tiene formato de versión semántica (v1.0.13, 1.0.13, Build 12345)
+          const semVer = rawVer.match(/^v?\.?\s*(\d+(\.\d+)+([a-z]|\-rc\d+|\-beta\d+|\-hotfix\d*|\.hotfix\d*)?)$/i);
+          if (semVer) {
+            realVersionName = `v${semVer[1].replace(/^v\.?/i, '')}`;
+          } else if (/^build\s*#?\s*\d+$/i.test(rawVer)) {
+            realVersionName = rawVer;
+          } else if (/^(patch|hotfix|version|ver)\s*#?\s*\d+(\.\d+)*$/i.test(rawVer)) {
+            realVersionName = rawVer;
+          }
+        }
+
+        // Si era un placeholder de fecha pero el título o body contiene la versión real (ej: "Patch Notes - Version 1.0.10")
+        if (!realVersionName && isDatePlaceholder) {
+          const searchTxt = `${v.changelog_title || ''} ${cleanBody}`;
+          const found = searchTxt.match(/\b(v\.?\s*\d+(\.\d+)+|version\s*\d+(\.\d+)+|ver\.\s*\d+(\.\d+)+)/i);
+          if (found) {
+            const num = found[0].replace(/^(v|version|ver)\.?\s*/i, '').trim();
+            if (num && !/^\d{4}$/.test(num)) {
+              realVersionName = `v${num}`;
+            }
+          }
+        }
+
+        // Si es una versión real válida, agregarla a availableVersions
+        if (realVersionName) {
+          // Evitar duplicar la misma versión
+          const exists = availableVersions.some((item) => item.version.toLowerCase() === realVersionName!.toLowerCase());
+          if (!exists) {
+            availableVersions.push({
+              id: v.id,
+              version: realVersionName,
+              url: vUrl,
+              downloadUrl: vUrl,
+              hasDownload: hasDl,
+              isAvailable: v.is_available !== false && hasDl,
+              buildId: v.build_id || '',
+              changelogTitle: v.changelog_title || '',
+              changelogBody: cleanBody,
+              notes: entryNotes,
+              releaseDate: v.release_date ? new Date(v.release_date).toISOString().split('T')[0] : '',
+            });
+          }
         }
       });
 
-      // Asegurar que siempre haya una versión disponible si es un juego activo
-      if (availableVersions.length === 0) {
-        availableVersions.push({ 
-          version: row.latest_official_version || 'v1.0', 
-          url: row.download_url 
-        });
-      }
-
-      if (changelog.length === 0) {
-        changelog.push({
-          version: row.latest_official_version || 'v1.0',
-          date: new Date().toISOString().split('T')[0],
-          notes: ['Versión oficial del catálogo Supabase'],
-        });
-      }
+      // La versión más reciente es la última versión con link de descarga, o la primera del historial
+      const latestDownloadable = availableVersions.find((v) => v.url && v.url.trim() !== '');
+      const resolvedLatestVersion = latestDownloadable?.version || availableVersions[0]?.version || row.latest_official_version || 'v1.0';
+      const resolvedDownloadUrl = latestDownloadable?.url || row.download_url || '';
 
       return {
         id: index + 1, // Unique numeric ID for frontend list keying
@@ -185,7 +237,7 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
         status: 'not_installed',
         currentVersion: '',
         installedVersions: [],
-        latestVersion: availableVersions[0]?.version || row.latest_official_version || 'v1.0',
+        latestVersion: resolvedLatestVersion,
         hoursPlayed: 0,
         requirements: reqs,
         changelog: changelog,
@@ -194,7 +246,7 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
         gameVersionDlcs,
         controllerSupport: row.controller_support ?? true,
         size: sizeMB,
-        downloadUrl: row.download_url,
+        downloadUrl: resolvedDownloadUrl,
         executableRelativePath: row.executable_relative_path,
         steamAppId: row.steam_appid || undefined,
         availableVersions: availableVersions,
