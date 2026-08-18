@@ -154,6 +154,7 @@ export function SettingsView() {
 
   const [downloadPath, setDownloadPath] = useState('C:\\Games\\SteamPersonal');
   const [downloadSpeed, setDownloadSpeed] = useState('Sin límite');
+  const [userGofileToken, setUserGofileToken] = useState(() => localStorage.getItem('user_gofile_token') || '');
   const [theme, setTheme] = useState('dark');
   const [lang, setLang] = useState('Español');
 
@@ -173,20 +174,20 @@ export function SettingsView() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
-        <Section title="Conexiones de Red" icon={Server}>
+        <Section title="Conexiones de Red y Proveedores" icon={Server}>
           <SettingRow
             icon={Server}
             label="Clave API de Steam"
             description="Necesaria para obtener la lista oficial de logros de tus juegos emulados."
           >
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
               <input 
-                type="text" 
-                value={steamApiKey}
+                type="password" 
+                placeholder="Inserta tu Web API Key..." 
+                value={steamApiKey} 
                 onChange={(e) => setSteamApiKey(e.target.value)}
-                placeholder="Ej. 6A3DB6..."
-                className="px-3 py-1.5 rounded-lg text-xs"
-                style={{ backgroundColor: 'rgba(0,0,0,0.3)', color: '#fff', border: '1px solid rgba(255,255,255,0.1)', width: '220px', outline: 'none' }}
+                className="px-3 py-1.5 rounded-lg text-xs font-mono outline-none"
+                style={{ backgroundColor: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)', color: '#A5B4FC', width: '220px' }}
               />
               <button 
                 onClick={handleSaveSettings}
@@ -195,6 +196,33 @@ export function SettingsView() {
               >
                 Guardar
               </button>
+            </div>
+          </SettingRow>
+
+          <SettingRow
+            icon={Server}
+            label="Token Personal de Gofile (Opcional)"
+            description="Si posees cuenta en Gofile (gofile.io/myProfile), ingrésalo aquí. Si está vacío, usa el token global."
+            iconColor="#F59E0B"
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="Token personal de Gofile..."
+                value={userGofileToken}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setUserGofileToken(val);
+                  localStorage.setItem('user_gofile_token', val.trim());
+                }}
+                className="px-3 py-1.5 rounded-lg text-xs font-mono outline-none"
+                style={{
+                  backgroundColor: 'rgba(0,0,0,0.3)',
+                  border: '1px solid rgba(245,158,11,0.3)',
+                  color: '#FCD34D',
+                  width: '220px'
+                }}
+              />
             </div>
           </SettingRow>
         </Section>

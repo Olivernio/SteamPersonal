@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../services/supabaseAdmin';
-import type { DbGame, RecipeStep, DlcItem, DbGameVersion } from '../services/supabaseAdmin';
-import { parseMirrors, serializeMirrors } from '../services/supabaseAdmin';
+import type { DbGame, RecipeStep, DlcItem, DbGameVersion, RecipeFragment, VersionMirror } from '../services/supabaseAdmin';
+import { parseMirrors, serializeMirrors, fetchRecipeFragments, saveVersionMirrors, fetchSystemSettings, upsertSystemSetting } from '../services/supabaseAdmin';
 import { fetchSteamGameDetails, searchSteamGames, fetchSteamEventsAndVersions } from '../services/steamService';
 import type { SteamSearchResult } from '../services/steamService';
 import { VisualRecipeBuilder } from './VisualRecipeBuilder';
 import { MultiBannerPreview } from './MultiBannerPreview';
 import { VersionManagerModal } from './VersionManagerModal';
 import { DlcVersionMatrix } from './DlcVersionMatrix';
+import { RecipeFragmentManager } from './RecipeFragmentManager';
 import {
   Plus, Edit2, Trash2, RefreshCw, Layers, Zap, Search, Flame, ArrowUpDown, MessageSquare,
   CheckCircle2, Image as ImageIcon, LayoutGrid, Eye, FileText, X, Package, Tag,
-  Sparkles
+  Sparkles, BookOpen, Key, Save
 } from 'lucide-react';
 
 const uuidv4 = () => {
@@ -126,7 +127,23 @@ export const CatalogManager: React.FC = () => {
   const [searchResults, setSearchResults] = useState<SteamSearchResult[]>([]);
   const [searchingSteam, setSearchingSteam] = useState(false);
 
-  // Form state
+  // Recipe Fragments State
+  const [fragments, setFragments] = useState<RecipeFragment[]>([]);
+  const [fragmentManagerOpen, setFragmentManagerOpen] = useState(false);
+
+  // System Settings State (Global Provider Tokens)
+  const [systemSettingsModalOpen, setSystemSettingsModalOpen] = useState(false);
+  const [gofileTokenInput, setGofileTokenInput] = useState('');
+  const [savingSystemSettings, setSavingSystemSettings] = useState(false);
+
+  useEffect(() => {
+    fetchRecipeFragments().then(setFragments);
+    fetchSystemSettings().then((settings) => {
+      if (settings.gofile_api_token) {
+        setGofileTokenInput(settings.gofile_api_token);
+      }
+    });
+  }, []);
   const [title, setTitle] = useState('');
   const [gameKey, setGameKey] = useState('');
   const [steamAppId, setSteamAppId] = useState('');
@@ -269,6 +286,32 @@ export const CatalogManager: React.FC = () => {
       setSteps((prev) =>
         prev.map((s) => (s.action === 'create_shortcut' ? { ...s, shortcut_name: details.title } : s))
       );
+
+      // Auto-fetch latest versions & Build IDs if initial version list is empty or default
+      try {
+        const fetchedVersions = await fetchSteamEventsAndVersions(targetAppId);
+        if (fetchedVersions.length > 0) {
+          setGameVersions((prev) => {
+            const isInitialDefault = prev.length <= 1 && (!prev[0]?.download_url || prev[0]?.version_name === 'v1.0.0');
+            if (isInitialDefault) {
+              return fetchedVersions.map((f, idx) => ({
+                game_id: editingGame?.id || '',
+                version_name: f.version_name,
+                build_id: f.build_id,
+                release_date: f.release_date,
+                is_available: idx === 0, // Latest version active by default
+                download_url: '',
+                mirrors: [],
+                changelog_title: f.changelog_title,
+                changelog_body: f.changelog_body,
+              }));
+            }
+            return prev;
+          });
+        }
+      } catch (versionErr) {
+        console.warn('No se pudieron precargar versiones automáticamente en importación inicial:', versionErr);
+      }
     } catch (err: any) {
       alert(`Error al importar de Steam: ${err.message}`);
     } finally {
@@ -310,9 +353,12 @@ export const CatalogManager: React.FC = () => {
     try {
       const fetched = await fetchSteamEventsAndVersions(targetAppId);
       if (fetched.length === 0) {
-        alert('No se encontraron versiones o eventos nuevos para este Steam AppID.');
+        alert('No se encontraron versiones o builds nuevos para este Steam AppID.');
         return;
       }
+
+      let updatedCount = 0;
+      let newCount = 0;
 
       setGameVersions((prev) => {
         const existingNames = new Set(prev.map((v) => v.version_name.toLowerCase()));
@@ -321,6 +367,7 @@ export const CatalogManager: React.FC = () => {
         fetched.forEach((f) => {
           if (!existingNames.has(f.version_name.toLowerCase())) {
             existingNames.add(f.version_name.toLowerCase());
+            newCount++;
             toAdd.push({
               game_id: editingGame?.id || '',
               version_name: f.version_name,
@@ -337,6 +384,7 @@ export const CatalogManager: React.FC = () => {
             const existingIdx = prev.findIndex((v) => v.version_name.toLowerCase() === f.version_name.toLowerCase());
             if (existingIdx !== -1 && f.build_id && !prev[existingIdx].build_id) {
               prev[existingIdx].build_id = f.build_id;
+              updatedCount++;
             }
           }
         });
@@ -345,7 +393,7 @@ export const CatalogManager: React.FC = () => {
         return combined.sort((a, b) => compareVersions(a.version_name, b.version_name));
       });
 
-      alert(`¡Sincronización completada! Se detectaron y actualizaron versiones y Build IDs desde Steam.`);
+      alert(`¡Sincronización completada con éxito!\n\n• ${fetched.length} versiones/builds detectadas desde Steam y SteamDB.\n• ${newCount} nuevas versiones agregadas.\n• ${updatedCount} Build IDs autocompletados en versiones existentes.`);
     } catch (e: any) {
       alert(`Error al sincronizar con Steam: ${e.message}`);
     } finally {
@@ -428,7 +476,7 @@ export const CatalogManager: React.FC = () => {
         release_date: new Date().toISOString().split('T')[0],
         is_available: true,
         download_url: '',
-        mirrors: [{ provider: 'Google Drive', url: '' }],
+        mirrors: [],
       },
     ]);
     setVersionDlcs({});
@@ -468,20 +516,23 @@ export const CatalogManager: React.FC = () => {
     const { data: dlcData } = await supabase.from('dlcs').select('*').eq('game_id', game.id!);
     setDlcsList(dlcData || []);
 
-    // Fetch game_versions
+    // Fetch game_versions along with their relational version_mirrors
     const { data: versionsData } = await supabase
       .from('game_versions')
-      .select('*')
+      .select('*, version_mirrors(*)')
       .eq('game_id', game.id!)
       .order('release_date', { ascending: false });
 
     const realVersionsData = (versionsData || []).filter((v) => isRealVersion(v));
 
     const loadedVersions = realVersionsData
-      .map((v) => ({
+      .map((v: any) => ({
         ...v,
         version_name: resolveVersionName(v),
         mirrors: parseMirrors(v.download_url),
+        version_mirrors: Array.isArray(v.version_mirrors)
+          ? v.version_mirrors.sort((a: any, b: any) => a.display_order - b.display_order)
+          : [],
       }))
       .sort((a, b) => compareVersions(a.version_name, b.version_name));
 
@@ -705,6 +756,36 @@ export const CatalogManager: React.FC = () => {
             const { error: gvdError } = await supabase.from('game_version_dlcs').insert(gvdPayload);
             if (gvdError) console.error('Error saving game_version_dlcs:', gvdError);
           }
+
+          // 5. Save Relational Version Mirrors (with per-mirror recipes)
+          for (const sv of savedVersionsData) {
+            const matchingGv = gameVersions.find(
+              (gv) => (gv.id && gv.id === sv.id) || gv.version_name === sv.version_name
+            );
+            if (matchingGv) {
+              const mirrorsToSave: Omit<VersionMirror, 'id' | 'game_version_id' | 'created_at' | 'updated_at'>[] =
+                matchingGv.version_mirrors && matchingGv.version_mirrors.length > 0
+                  ? matchingGv.version_mirrors.map((m, idx) => ({
+                      provider: m.provider,
+                      url: m.url,
+                      display_order: idx,
+                      recipe_mode: m.recipe_mode || 'inherit',
+                      recipe_steps: m.recipe_mode === 'override' ? m.recipe_steps : null,
+                      notes: m.notes,
+                    }))
+                  : (matchingGv.mirrors || []).map((m, idx) => ({
+                      provider: m.provider,
+                      url: m.url,
+                      display_order: idx,
+                      recipe_mode: 'inherit',
+                      recipe_steps: null,
+                    }));
+
+              if (mirrorsToSave.length > 0) {
+                await saveVersionMirrors(sv.id, mirrorsToSave);
+              }
+            }
+          }
         }
       }
     }
@@ -763,6 +844,44 @@ export const CatalogManager: React.FC = () => {
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button
+            onClick={() => setSystemSettingsModalOpen(true)}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '10px',
+              backgroundColor: 'rgba(245,158,11,0.12)',
+              border: '1px solid rgba(245,158,11,0.3)',
+              color: '#FCD34D',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            <Key size={14} /> Tokens de Proveedores
+          </button>
+
+          <button
+            onClick={() => setFragmentManagerOpen(true)}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '10px',
+              backgroundColor: 'rgba(129,140,248,0.12)',
+              border: '1px solid rgba(129,140,248,0.3)',
+              color: '#A5B4FC',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            <BookOpen size={14} /> Fragmentos de Recetas
+          </button>
+
           <button
             onClick={fetchCatalog}
             style={{
@@ -1923,7 +2042,8 @@ export const CatalogManager: React.FC = () => {
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       {displayedVersions.map((v, idx) => {
-                        const versionMirrors = v.mirrors || parseMirrors(v.download_url);
+                        const rawMirrors = v.mirrors || parseMirrors(v.download_url);
+                        const versionMirrors = rawMirrors.filter((m) => m.url && m.url.trim() !== '');
                         const assignedDlcsCount = (versionDlcs[v.id || v.version_name] || []).length;
 
                         return (
@@ -1969,8 +2089,8 @@ export const CatalogManager: React.FC = () => {
                                   <span style={{ color: '#10B981', fontWeight: 600 }}>
                                     📦 {assignedDlcsCount} DLCs asignados
                                   </span>
-                                  <span style={{ color: '#A5B4FC', fontWeight: 600 }}>
-                                    🔗 {versionMirrors.length} {versionMirrors.length === 1 ? 'mirror' : 'mirrors'} de descarga
+                                  <span style={{ color: versionMirrors.length > 0 ? '#A5B4FC' : 'rgba(255,255,255,0.3)', fontWeight: 600 }}>
+                                    🔗 {versionMirrors.length > 0 ? `${versionMirrors.length} ${versionMirrors.length === 1 ? 'mirror' : 'mirrors'} de descarga` : 'Sin enlaces de descarga'}
                                   </span>
                                 </div>
                               </div>
@@ -2072,7 +2192,7 @@ export const CatalogManager: React.FC = () => {
 
                   {/* Visual Recipe Builder */}
                   <div style={{ paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                    <VisualRecipeBuilder steps={steps} onChange={setSteps} defaultDownloadUrl="" defaultTitle={title} />
+                    <VisualRecipeBuilder steps={steps} onChange={setSteps} defaultDownloadUrl="" defaultTitle={title} fragments={fragments} />
                   </div>
                 </div>
               )}
@@ -2323,7 +2443,132 @@ export const CatalogManager: React.FC = () => {
         onSave={handleSaveVersion}
         onDelete={handleDeleteVersion}
         allExistingVersions={gameVersions}
+        steamAppId={steamAppId || editingGame?.steam_appid}
       />
+
+      {/* Recipe Fragment Manager Modal */}
+      {fragmentManagerOpen && (
+        <RecipeFragmentManager
+          onClose={() => setFragmentManagerOpen(false)}
+          onFragmentsChange={setFragments}
+        />
+      )}
+
+      {/* System Settings (Provider Tokens) Modal */}
+      {systemSettingsModalOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 15000,
+          backgroundColor: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(8px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+        }}>
+          <div style={{
+            backgroundColor: '#131722', borderRadius: '16px',
+            border: '1px solid rgba(245,158,11,0.25)',
+            width: '100%', maxWidth: '560px',
+            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            boxShadow: '0 24px 64px rgba(0,0,0,0.6)'
+          }}>
+            {/* Header */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '18px 22px', borderBottom: '1px solid rgba(255,255,255,0.08)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Key size={18} style={{ color: '#FCD34D' }} />
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: '#E2E8F0' }}>
+                    Tokens de Proveedores Globales
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '11px', color: 'rgba(255,255,255,0.4)' }}>
+                    Configuración compartida con todos los launchers cliente
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSystemSettingsModalOpen(false)}
+                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', padding: 0 }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: '20px 22px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#E2E8F0', marginBottom: '4px' }}>
+                  Gofile Account API Token
+                </label>
+                <p style={{ margin: '0 0 8px', fontSize: '11px', color: 'rgba(255,255,255,0.45)', lineHeight: 1.4 }}>
+                  Obtenido en <a href="https://gofile.io/myProfile" target="_blank" rel="noreferrer" style={{ color: '#818CF8', textDecoration: 'underline' }}>gofile.io/myProfile</a>. Permite a los launchers descargar y extraer en streaming sin errores 401.
+                </p>
+                <input
+                  type="text"
+                  value={gofileTokenInput}
+                  onChange={(e) => setGofileTokenInput(e.target.value)}
+                  placeholder="Ej: N4thQbCrGyzHYAKtBY6hIwyt7fWDPRYi..."
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    backgroundColor: 'rgba(0,0,0,0.3)',
+                    border: '1px solid rgba(245,158,11,0.3)',
+                    color: '#FCD34D',
+                    fontSize: '13px',
+                    fontFamily: 'monospace',
+                    outline: 'none'
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{
+              padding: '14px 22px', borderTop: '1px solid rgba(255,255,255,0.08)',
+              display: 'flex', justifyContent: 'flex-end', gap: '10px'
+            }}>
+              <button
+                type="button"
+                onClick={() => setSystemSettingsModalOpen(false)}
+                style={{
+                  padding: '8px 16px', borderRadius: '8px',
+                  backgroundColor: 'transparent', border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'rgba(255,255,255,0.6)', cursor: 'pointer', fontSize: '12px'
+                }}
+              >
+                Cerrar
+              </button>
+              <button
+                type="button"
+                disabled={savingSystemSettings}
+                onClick={async () => {
+                  setSavingSystemSettings(true);
+                  const ok = await upsertSystemSetting(
+                    'gofile_api_token',
+                    gofileTokenInput.trim(),
+                    'Token de cuenta de Gofile para descargas streaming'
+                  );
+                  setSavingSystemSettings(false);
+                  if (ok) {
+                    alert('¡Token de Gofile guardado con éxito en Supabase!');
+                    setSystemSettingsModalOpen(false);
+                  } else {
+                    alert('Error al guardar el token en Supabase.');
+                  }
+                }}
+                style={{
+                  padding: '8px 18px', borderRadius: '8px',
+                  backgroundColor: '#F59E0B', border: 'none',
+                  color: '#000', fontWeight: 700, cursor: 'pointer',
+                  fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px'
+                }}
+              >
+                <Save size={13} /> {savingSystemSettings ? 'Guardando...' : 'Guardar Token'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Screenshot Lightbox Modal */}
       {lightboxUrl && (

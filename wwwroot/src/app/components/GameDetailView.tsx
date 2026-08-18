@@ -9,7 +9,7 @@ interface GameDetailViewProps {
   game: Game;
   onBack: () => void;
   onRequestUpdate: (gameId: number) => void;
-  onStartDownload?: (game: Game, version: string, customUrl?: string) => void;
+  onStartDownload?: (game: Game, version: string, customUrl?: string, selectedMirror?: any) => void;
   onLaunchGame?: (gameTitle: string, version?: string, gamePath?: string, appId?: number, gameKey?: string, savePattern?: string) => void;
 }
 
@@ -44,12 +44,29 @@ const ExpandableText = ({ text, lines = 3 }: { text: string, lines?: number }) =
   );
 };
 
+export function normalizeVersion(ver?: string): string {
+  if (!ver) return '';
+  return ver.toLowerCase().replace(/^(version|ver|v)\.?\s*/i, '').trim();
+}
+
+export function isVersionEqual(v1?: string, v2?: string): boolean {
+  if (!v1 || !v2) return false;
+  return normalizeVersion(v1) === normalizeVersion(v2);
+}
+
+export function isVersionInList(ver?: string, list?: string[]): boolean {
+  if (!ver || !list || list.length === 0) return false;
+  const norm = normalizeVersion(ver);
+  return list.some((item) => normalizeVersion(item) === norm);
+}
+
 export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload, onLaunchGame }: GameDetailViewProps) {
   const installedList = game.installedVersions && game.installedVersions.length > 0
     ? game.installedVersions
     : (game.currentVersion ? [game.currentVersion] : []);
   const hasInstalled = installedList.length > 0;
-  const isLatestInstalled = installedList.includes(game.latestVersion) || (game.currentVersion === game.latestVersion && hasInstalled);
+  const isLatestInstalled = isVersionInList(game.latestVersion, installedList) ||
+    (isVersionEqual(game.currentVersion, game.latestVersion) && hasInstalled);
 
   const initialVersion = hasInstalled
     ? (game.currentVersion || installedList[installedList.length - 1])
@@ -61,14 +78,14 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
     setSelectedVersion(initialVersion);
   }, [game.status, game.currentVersion, game.latestVersion, game.installedVersions]);
 
-  const selectedVersionObj = game.availableVersions?.find((v) => v.version === selectedVersion);
+  const selectedVersionObj = game.availableVersions?.find((v) => isVersionEqual(v.version, selectedVersion));
   const selectedHasDownload = Boolean(
     (selectedVersionObj?.url && selectedVersionObj.url.trim() !== '') ||
     (selectedVersionObj?.downloadUrl && selectedVersionObj.downloadUrl.trim() !== '')
   );
   const anyDownloadable = game.availableVersions?.find((v) => v.url && v.url.trim() !== '');
 
-  const isSelectedInstalled = Boolean(selectedVersion && installedList.includes(selectedVersion));
+  const isSelectedInstalled = Boolean(selectedVersion && isVersionInList(selectedVersion, installedList));
 
   const [versionOpen, setVersionOpen] = useState(false);
   const [requestSent, setRequestSent] = useState(false);
@@ -86,14 +103,19 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
 
   const handleLaunch = (versionToLaunch?: string) => {
     const v = versionToLaunch || (isSelectedInstalled ? selectedVersion : (installedList[0] || game.currentVersion));
-    const path = v && game.installedPaths ? game.installedPaths[v] : undefined;
+    let path = v && game.installedPaths ? game.installedPaths[v] : undefined;
+    if (!path && v && game.installedPaths) {
+      const matchKey = Object.keys(game.installedPaths).find((k) => isVersionEqual(k, v));
+      if (matchKey) path = game.installedPaths[matchKey];
+    }
     onLaunchGame?.(game.title, v, path, game.steamAppId || (game as any).appId, game.gameKey, game.savePathPattern);
   };
 
-  const handleDownload = (ver?: string) => {
+  const handleDownload = (ver?: string, customMirror?: any) => {
     const targetVer = ver || selectedVersion;
-    const versionObj = game.availableVersions?.find(v => v.version === targetVer);
-    onStartDownload?.(game, targetVer, versionObj?.url || versionObj?.downloadUrl);
+    const versionObj = game.availableVersions?.find(v => isVersionEqual(v.version, targetVer));
+    const selectedMirror = customMirror || versionObj?.versionMirrors?.[0];
+    onStartDownload?.(game, targetVer, selectedMirror?.url || versionObj?.url || versionObj?.downloadUrl, selectedMirror);
   };
   const [savegameStatusMsg, setSavegameStatusMsg] = useState<string | null>(null);
 
@@ -318,11 +340,10 @@ function compareVersions(vA: string, vB: string): number {
 
   const availableVersionsList = useMemo(() => {
     const list: { label: string; value: string; isInstalled: boolean; url?: string; isAvailable: boolean }[] = [];
-    const installedSet = new Set(installedList);
 
     if (game.availableVersions && game.availableVersions.length > 0) {
       game.availableVersions.forEach((v) => {
-        const isInst = installedSet.has(v.version);
+        const isInst = isVersionInList(v.version, installedList);
         const hasDl = Boolean(v.hasDownload || v.isAvailable);
 
         if (!isRealGameVersion({ version: v.version, changelogTitle: v.changelogTitle, hasDownload: hasDl, isInstalled: isInst, buildId: v.buildId })) {
@@ -342,8 +363,8 @@ function compareVersions(vA: string, vB: string): number {
     }
 
     // Include installed versions that might not be in catalog
-    installedSet.forEach((instV) => {
-      if (instV && !list.some((item) => item.value === instV)) {
+    installedList.forEach((instV) => {
+      if (instV && !list.some((item) => isVersionEqual(item.value, instV))) {
         list.push({
           label: `${instV} (Instalada)`,
           value: instV,
@@ -372,7 +393,6 @@ function compareVersions(vA: string, vB: string): number {
   }, [game.availableVersions, installedList, game.latestVersion, game.downloadUrl, showBuildId, hasInstalled, versionSortOrder]);
 
   const unifiedVersionsList = useMemo(() => {
-    const installedSet = new Set(installedList);
     const list: {
       version: string;
       date?: string;
@@ -392,7 +412,7 @@ function compareVersions(vA: string, vB: string): number {
           version: av.version,
           changelogTitle: av.changelogTitle,
           hasDownload: hasUrl,
-          isInstalled: installedSet.has(av.version),
+          isInstalled: isVersionInList(av.version, installedList),
           buildId: av.buildId,
         });
       });
@@ -407,14 +427,14 @@ function compareVersions(vA: string, vB: string): number {
     if (game.availableVersions && game.availableVersions.length > 0) {
       game.availableVersions.forEach((av) => {
         const hasUrl = Boolean((av.url && av.url.trim() !== '') || (av.downloadUrl && av.downloadUrl.trim() !== ''));
-        const isInst = installedSet.has(av.version);
+        const isInst = isVersionInList(av.version, installedList);
 
         // Strict filter: only include real version updates (e.g. v1.0.13, Patch 1.2, Build 12345)
         if (!isRealGameVersion({ version: av.version, changelogTitle: av.changelogTitle, hasDownload: hasUrl, isInstalled: isInst, buildId: av.buildId })) {
           return;
         }
 
-        const isLatestGameVersion = Boolean(highestVersionName && av.version.toLowerCase() === highestVersionName.toLowerCase());
+        const isLatestGameVersion = Boolean(highestVersionName && isVersionEqual(av.version, highestVersionName));
 
         // Filter: If showAllVersions is FALSE (default) ->
         // Show versions that have a download link, are installed, OR the highest/latest game version (so user can request update)
@@ -443,8 +463,8 @@ function compareVersions(vA: string, vB: string): number {
     }
 
     // 2. Add locally installed versions that might not be in catalog
-    installedSet.forEach((instV) => {
-      if (instV && !list.some((item) => item.version === instV)) {
+    installedList.forEach((instV) => {
+      if (instV && !list.some((item) => isVersionEqual(item.version, instV))) {
         list.push({
           version: instV,
           isAvailable: true,

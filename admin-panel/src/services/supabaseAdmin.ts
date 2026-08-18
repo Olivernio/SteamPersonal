@@ -5,6 +5,7 @@ const SUPABASE_ANON_KEY = import.meta.env.SUPABASE_ANON_KEY || '';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// ─── Legacy mirror type (kept for backwards compat) ───────────────────────────
 export interface DownloadMirror {
   provider: string;
   url: string;
@@ -31,7 +32,8 @@ export interface DbGameVersion {
   event_id?: string;
   created_at?: string;
   updated_at?: string;
-  mirrors?: DownloadMirror[];
+  mirrors?: DownloadMirror[];         // legacy (from download_url text)
+  version_mirrors?: VersionMirror[];  // new relational mirrors
 }
 
 export interface DbGame {
@@ -80,6 +82,180 @@ export interface DbRecipe {
   steps: RecipeStep[];
 }
 
+// ─── New: Per-Mirror recipe ───────────────────────────────────────────────────
+
+/** A mirror entry stored in the version_mirrors table */
+export interface VersionMirror {
+  id?: string;
+  game_version_id: string;
+  provider: string;
+  url: string;
+  display_order: number;
+  /** 'inherit' = use the game's base recipe; 'override' = use recipe_steps below */
+  recipe_mode: 'inherit' | 'override';
+  recipe_steps: RecipeStep[] | null;
+  notes?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// ─── New: Reusable recipe fragments ──────────────────────────────────────────
+
+/** A reusable block of recipe steps the admin can apply to any mirror */
+export interface RecipeFragment {
+  id?: string;
+  name: string;
+  description?: string;
+  steps: RecipeStep[];
+  tags: string[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+// ─── CRUD: version_mirrors ────────────────────────────────────────────────────
+
+/** Fetch all mirrors for a given game_version id */
+export async function fetchVersionMirrors(gameVersionId: string): Promise<VersionMirror[]> {
+  const { data, error } = await supabase
+    .from('version_mirrors')
+    .select('*')
+    .eq('game_version_id', gameVersionId)
+    .order('display_order', { ascending: true });
+  if (error) {
+    console.error('Error fetching version_mirrors:', error.message);
+    return [];
+  }
+  return (data ?? []) as VersionMirror[];
+}
+
+/** Replace all mirrors for a game_version (delete existing, insert new) */
+export async function saveVersionMirrors(
+  gameVersionId: string,
+  mirrors: Omit<VersionMirror, 'id' | 'game_version_id' | 'created_at' | 'updated_at'>[]
+): Promise<boolean> {
+  const { error: delErr } = await supabase
+    .from('version_mirrors')
+    .delete()
+    .eq('game_version_id', gameVersionId);
+  if (delErr) {
+    console.error('Error deleting version_mirrors:', delErr.message);
+    return false;
+  }
+
+  if (mirrors.length === 0) return true;
+
+  const rows = mirrors.map((m, idx) => ({
+    game_version_id: gameVersionId,
+    provider: m.provider,
+    url: m.url,
+    display_order: idx,
+    recipe_mode: m.recipe_mode,
+    recipe_steps: m.recipe_mode === 'override' ? m.recipe_steps : null,
+    notes: m.notes ?? null,
+  }));
+
+  const { error: insErr } = await supabase.from('version_mirrors').insert(rows);
+  if (insErr) {
+    console.error('Error inserting version_mirrors:', insErr.message);
+    return false;
+  }
+  return true;
+}
+
+// ─── CRUD: recipe_fragments ───────────────────────────────────────────────────
+
+export async function fetchRecipeFragments(): Promise<RecipeFragment[]> {
+  const { data, error } = await supabase
+    .from('recipe_fragments')
+    .select('*')
+    .order('name', { ascending: true });
+  if (error) {
+    console.error('Error fetching recipe_fragments:', error.message);
+    return [];
+  }
+  return (data ?? []) as RecipeFragment[];
+}
+
+export async function upsertRecipeFragment(
+  fragment: Omit<RecipeFragment, 'created_at' | 'updated_at'>
+): Promise<RecipeFragment | null> {
+  const payload = {
+    ...(fragment.id ? { id: fragment.id } : {}),
+    name: fragment.name,
+    description: fragment.description ?? null,
+    steps: fragment.steps,
+    tags: fragment.tags,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from('recipe_fragments')
+    .upsert(payload, { onConflict: 'id' })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error upserting recipe_fragment:', error.message);
+    return null;
+  }
+  return data as RecipeFragment;
+}
+
+export async function deleteRecipeFragment(fragmentId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('recipe_fragments')
+    .delete()
+    .eq('id', fragmentId);
+  if (error) {
+    console.error('Error deleting recipe_fragment:', error.message);
+    return false;
+  }
+  return true;
+}
+
+// ─── CRUD: system_settings ───────────────────────────────────────────────────
+
+export interface SystemSetting {
+  key: string;
+  value: string;
+  description?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export async function fetchSystemSettings(): Promise<Record<string, string>> {
+  const { data, error } = await supabase
+    .from('system_settings')
+    .select('key, value');
+  if (error) {
+    console.error('Error fetching system_settings:', error.message);
+    return {};
+  }
+  const result: Record<string, string> = {};
+  (data || []).forEach((row: any) => {
+    result[row.key] = row.value;
+  });
+  return result;
+}
+
+export async function upsertSystemSetting(key: string, value: string, description?: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('system_settings')
+    .upsert({
+      key,
+      value,
+      description: description ?? null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'key' });
+  if (error) {
+    console.error('Error upserting system_setting:', error.message);
+    return false;
+  }
+  return true;
+}
+
+// ─── Legacy helpers (kept for backward compat) ────────────────────────────────
+
 export const parseMirrors = (raw?: string): DownloadMirror[] => {
   if (!raw || !raw.trim()) return [];
   const trimmed = raw.trim();
@@ -117,3 +293,10 @@ export const serializeMirrors = (mirrors: DownloadMirror[]): string => {
   }
   return JSON.stringify(clean);
 };
+
+/** Convert a VersionMirror[] to DownloadMirror[] for legacy display */
+export const versionMirrorsToLegacy = (mirrors: VersionMirror[]): DownloadMirror[] =>
+  mirrors.map(m => ({ provider: m.provider, url: m.url }));
+
+
+

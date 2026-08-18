@@ -16,6 +16,18 @@ export interface RecipeStep {
   shortcut_name?: string;
 }
 
+/** Per-mirror recipe entry from the version_mirrors table */
+export interface VersionMirror {
+  id?: string;
+  game_version_id: string;
+  provider: string;
+  url: string;
+  display_order: number;
+  recipe_mode: 'inherit' | 'override';
+  recipe_steps: RecipeStep[] | null;
+  notes?: string;
+}
+
 export interface SupabaseGame {
   id: string;
   game_key: string;
@@ -61,6 +73,7 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
         ),
         game_versions (
           *,
+          version_mirrors (*),
           game_version_dlcs (*)
         ),
         dlcs (*)
@@ -192,6 +205,11 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
           }
         }
 
+        // Parse mirrors from the new version_mirrors relational table
+        const versionMirrors: VersionMirror[] = Array.isArray(v.version_mirrors)
+          ? v.version_mirrors.sort((a: any, b: any) => a.display_order - b.display_order)
+          : [];
+
         // Si es una versión real válida, agregarla a availableVersions
         if (realVersionName) {
           // Evitar duplicar la misma versión
@@ -209,6 +227,7 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
               changelogBody: cleanBody,
               notes: entryNotes,
               releaseDate: v.release_date ? new Date(v.release_date).toISOString().split('T')[0] : '',
+              versionMirrors: versionMirrors,
             });
           }
         }
@@ -302,5 +321,28 @@ export async function requestSpecificVersion(
   } catch (err) {
     console.error('Exception requesting specific version:', err);
     return false;
+  }
+}
+
+/** Fetches global system settings from Supabase (e.g. gofile_api_token) */
+export async function fetchGlobalSettings(): Promise<Record<string, string>> {
+  try {
+    const { data, error } = await supabase
+      .from('system_settings')
+      .select('key, value');
+
+    if (error) {
+      console.warn('Could not fetch system_settings from Supabase:', error.message);
+      return {};
+    }
+
+    const settings: Record<string, string> = {};
+    (data || []).forEach((row: any) => {
+      if (row.key) settings[row.key] = row.value || '';
+    });
+    return settings;
+  } catch (err) {
+    console.warn('Exception fetching system_settings:', err);
+    return {};
   }
 }

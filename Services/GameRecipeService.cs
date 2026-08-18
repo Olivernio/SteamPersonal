@@ -19,7 +19,7 @@ namespace SteamPersonal.Services
             _downloader = downloader;
         }
 
-        public async Task ExecuteRecipeAsync(InstallationRecipe recipe, string defaultDownloadUrl)
+        public async Task ExecuteRecipeAsync(InstallationRecipe recipe, string defaultDownloadUrl, string? gofileToken = null)
         {
             try
             {
@@ -29,38 +29,41 @@ namespace SteamPersonal.Services
                 string juegosDir = Path.Combine(Directory.GetCurrentDirectory(), "Juegos");
                 Directory.CreateDirectory(juegosDir);
 
-                string baseDir = Path.Combine(juegosDir, safeTitle);
-                string versionTag = recipe.LatestOfficialVersion?.Trim() ?? "";
+                // ── Version tag normalisation ─────────────────────
+                // Strip leading 'v'/'V' for comparison, preserve original for display
+                string versionTag = (recipe.LatestOfficialVersion?.Trim()) ?? "v1.0";
+                if (string.IsNullOrWhiteSpace(versionTag)) versionTag = "v1.0";
+                // Ensure it always starts with 'v' for consistency
+                if (!versionTag.StartsWith("v", StringComparison.OrdinalIgnoreCase))
+                    versionTag = "v" + versionTag;
 
-                string installDir;
-                if (!string.IsNullOrEmpty(versionTag))
+                // ── Always use versioned sibling folder ───────────
+                // e.g. Juegos/My Game (v1.0.4)/
+                // This avoids ambiguity when the base folder contains only the latest install.
+                string installDir = Path.Combine(juegosDir, $"{safeTitle} ({versionTag})");
+
+                // If there is already an existing folder without the version tag (legacy)
+                // keep it as-is and just read/update the manifest inside it,
+                // otherwise always create the versioned folder.
+                string legacyDir = Path.Combine(juegosDir, safeTitle);
+                if (Directory.Exists(legacyDir))
                 {
-                    string existingVerFile = Path.Combine(baseDir, "version.txt");
-                    if (Directory.Exists(baseDir) && File.Exists(existingVerFile))
+                    string legacyManifest = Path.Combine(legacyDir, "sp_install.json");
+                    if (File.Exists(legacyManifest))
                     {
-                        string currentBaseVer = File.ReadAllText(existingVerFile).Trim();
-                        if (!string.Equals(currentBaseVer, versionTag, StringComparison.OrdinalIgnoreCase))
+                        // Already tagged with a manifest → respect the version inside
+                        try
                         {
-                            // Another version is already installed in the base folder -> use isolated folder for this version
-                            installDir = Path.Combine(juegosDir, $"{safeTitle} ({versionTag})");
+                            var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(legacyManifest));
+                            if (doc.RootElement.TryGetProperty("version", out var vProp) &&
+                                string.Equals(vProp.GetString(), versionTag, StringComparison.OrdinalIgnoreCase))
+                            {
+                                // Same version already installed in legacy folder
+                                installDir = legacyDir;
+                            }
                         }
-                        else
-                        {
-                            installDir = baseDir;
-                        }
+                        catch { }
                     }
-                    else if (Directory.Exists(baseDir) && Directory.GetFileSystemEntries(baseDir).Length > 0)
-                    {
-                        installDir = Path.Combine(juegosDir, $"{safeTitle} ({versionTag})");
-                    }
-                    else
-                    {
-                        installDir = baseDir;
-                    }
-                }
-                else
-                {
-                    installDir = baseDir;
                 }
 
                 Directory.CreateDirectory(installDir);
@@ -100,7 +103,7 @@ namespace SteamPersonal.Services
                     {
                         case "stream_extract":
                             string url = !string.IsNullOrWhiteSpace(step.Url) ? step.Url : defaultDownloadUrl;
-                            await _downloader.StartStreamExtractAsync(url, installDir, recipe.Title);
+                            await _downloader.StartStreamExtractAsync(url, installDir, recipe.Title, gofileToken);
                             break;
 
                         case "apply_crack":
@@ -134,12 +137,23 @@ namespace SteamPersonal.Services
                     OnStepProgress(i + 1, totalSteps, step.Action, desc, "completed");
                 }
 
-                // Always write version.txt in the installed version folder
-                if (!string.IsNullOrEmpty(recipe.LatestOfficialVersion))
+                // ── Write sp_install.json (source of truth) ───────
+                var manifest = new
                 {
-                    File.WriteAllText(Path.Combine(installDir, "version.txt"), recipe.LatestOfficialVersion);
-                }
+                    gameTitle = recipe.Title,
+                    safeTitle = safeTitle,
+                    version = versionTag,
+                    installedAt = DateTime.UtcNow.ToString("O"),
+                };
+                File.WriteAllText(
+                    Path.Combine(installDir, "sp_install.json"),
+                    System.Text.Json.JsonSerializer.Serialize(manifest, new System.Text.Json.JsonSerializerOptions { WriteIndented = true })
+                );
 
+                // Keep version.txt for backwards compatibility
+                File.WriteAllText(Path.Combine(installDir, "version.txt"), versionTag);
+
+                Console.WriteLine($"[Recipe] Instalación completada: {installDir}");
                 RecipeCompleted?.Invoke(this, installDir);
             }
             catch (Exception ex)

@@ -7,6 +7,7 @@ using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Text.Json;
 using SharpCompress.Common;
 using SharpCompress.Readers;
 using SteamPersonal.Services.Models;
@@ -50,7 +51,7 @@ namespace SteamPersonal.Services
 
         // ── Public API ──────────────────────────────────────────
 
-        public async Task StartStreamExtractAsync(string url, string destinationDir, string gameTitle)
+        public async Task StartStreamExtractAsync(string url, string destinationDir, string gameTitle, string? gofileToken = null)
         {
             // Cancel and wait for any previous task
             if (_activeTask != null && !_activeTask.IsCompleted)
@@ -69,7 +70,7 @@ namespace SteamPersonal.Services
             _cts = new CancellationTokenSource();
             _pauseEvent.Set();
 
-            _activeTask = Task.Run(() => ExecuteStreamExtractAsync(url, destinationDir, gameTitle, _cts.Token));
+            _activeTask = Task.Run(() => ExecuteStreamExtractAsync(url, destinationDir, gameTitle, gofileToken, _cts.Token));
             await _activeTask;
         }
 
@@ -108,7 +109,7 @@ namespace SteamPersonal.Services
 
         // ── Core: Streaming Extraction with Checkpoints ─────────
 
-        private async Task ExecuteStreamExtractAsync(string url, string destinationDir, string gameTitle, CancellationToken ct)
+        private async Task ExecuteStreamExtractAsync(string url, string destinationDir, string gameTitle, string? gofileToken, CancellationToken ct)
         {
             int retryCount = 0;
 
@@ -155,8 +156,8 @@ namespace SteamPersonal.Services
                     client.Timeout = TimeSpan.FromHours(4);
                     client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 
-                    // Resolve Google Drive URL (same client preserves cookies)
-                    string downloadUrl = await ResolveUrlWithClientAsync(client, url, ct);
+                    // Resolve URL (preserves cookies for Google Drive, Gofile, etc.)
+                    string downloadUrl = await ResolveUrlWithClientAsync(client, cookieContainer, url, gofileToken, ct);
 
                     using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
                     response.EnsureSuccessStatusCode();
@@ -288,9 +289,157 @@ namespace SteamPersonal.Services
             }
         }
 
-        // ── Google Drive URL resolution ─────────────────────────
+        // ── URL Resolvers (Google Drive, Gofile, Direct Links) ────
 
-        private async Task<string> ResolveUrlWithClientAsync(HttpClient client, string url, CancellationToken ct)
+        private async Task<string> ResolveUrlWithClientAsync(HttpClient client, CookieContainer cookieContainer, string url, string? gofileToken, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+                return url;
+
+            // 1. Gofile.io Link Resolution
+            if (url.Contains("gofile.io", StringComparison.OrdinalIgnoreCase))
+            {
+                return await ResolveGofileUrlAsync(client, cookieContainer, url, gofileToken, ct);
+            }
+
+            // 2. Google Drive Link Resolution
+            if (url.Contains("drive.google.com", StringComparison.OrdinalIgnoreCase) ||
+                url.Contains("drive.usercontent.google.com", StringComparison.OrdinalIgnoreCase))
+            {
+                return await ResolveGoogleDriveUrlAsync(client, url, ct);
+            }
+
+            // 3. Direct URL (S3, R2, CDN, Direct HTTP File)
+            return url;
+        }
+
+        private async Task<string> ResolveGofileUrlAsync(HttpClient client, CookieContainer cookieContainer, string url, string? customGofileToken, CancellationToken ct)
+        {
+            string token = customGofileToken?.Trim() ?? string.Empty;
+
+            // 1. Obtain token (custom API token or anonymous guest session)
+            if (!string.IsNullOrEmpty(token))
+            {
+                Console.WriteLine($"[Gofile] Usando token de API configurado ({token.Substring(0, Math.Min(6, token.Length))}...)");
+                OnProgressUpdate(0, 0, 0, 0, "", "Usando token autenticado de Gofile...", 0);
+            }
+            else
+            {
+                Console.WriteLine("[Gofile] Solicitando sesión de invitado para descarga...");
+                OnProgressUpdate(0, 0, 0, 0, "", "Obteniendo sesión de Gofile...", 0);
+                try
+                {
+                    using (var accountReq = new HttpRequestMessage(HttpMethod.Post, "https://api.gofile.io/accounts"))
+                    {
+                        using var accountRes = await client.SendAsync(accountReq, ct);
+                        if (accountRes.IsSuccessStatusCode)
+                        {
+                            string accountJson = await accountRes.Content.ReadAsStringAsync(ct);
+                            using var accountDoc = JsonDocument.Parse(accountJson);
+                            if (accountDoc.RootElement.TryGetProperty("data", out var dataObj) &&
+                                dataObj.TryGetProperty("token", out var tokenProp))
+                            {
+                                token = tokenProp.GetString() ?? string.Empty;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Gofile] Aviso al crear cuenta guest: {ex.Message}");
+                }
+            }
+
+            // 2. Attach Authorization & Cookies for any Gofile request
+            if (!string.IsNullOrEmpty(token))
+            {
+                client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                try
+                {
+                    cookieContainer.Add(new Cookie("accountToken", token, "/", ".gofile.io"));
+                    cookieContainer.Add(new Cookie("accountToken", token, "/", "gofile.io"));
+                }
+                catch { }
+            }
+
+            // 3. If it's already a direct file link (e.g. https://*.gofile.io/download/web/...)
+            var folderMatch = Regex.Match(url, @"gofile\.io/d/([a-zA-Z0-9_-]+)", RegexOptions.IgnoreCase);
+            if (!folderMatch.Success)
+            {
+                // It's a direct download URL
+                Console.WriteLine($"[Gofile] Enlace directo de descarga detectado: {url}");
+                try
+                {
+                    cookieContainer.Add(new Uri(url), new Cookie("accountToken", token));
+                }
+                catch { }
+                return url;
+            }
+
+            // 4. It's a folder link (/d/...) -> query API to resolve the file direct link
+            string contentId = folderMatch.Groups[1].Value;
+            OnProgressUpdate(0, 0, 0, 0, "", "Consultando enlace directo en Gofile...", 0);
+
+            string queryUrl = !string.IsNullOrEmpty(token)
+                ? $"https://api.gofile.io/contents/{contentId}?token={token}"
+                : $"https://api.gofile.io/contents/{contentId}";
+
+            using var contentReq = new HttpRequestMessage(HttpMethod.Get, queryUrl);
+            if (!string.IsNullOrEmpty(token))
+            {
+                contentReq.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            }
+
+            using var contentRes = await client.SendAsync(contentReq, ct);
+            string contentJson = await contentRes.Content.ReadAsStringAsync(ct);
+
+            if (!contentRes.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"[Gofile] Error HTTP {(int)contentRes.StatusCode} al consultar contents ({contentId}): {contentJson}");
+                throw new Exception($"Error de autorización en Gofile (HTTP {(int)contentRes.StatusCode}). Pega el enlace directo de descarga o verifica tu token.");
+            }
+
+            using var contentDoc = JsonDocument.Parse(contentJson);
+
+            if (contentDoc.RootElement.TryGetProperty("data", out var dataElem))
+            {
+                string? directLink = null;
+
+                // If files are under 'children' (folder view)
+                if (dataElem.TryGetProperty("children", out var childrenElem) && childrenElem.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var prop in childrenElem.EnumerateObject())
+                    {
+                        if (prop.Value.TryGetProperty("link", out var linkProp))
+                        {
+                            directLink = linkProp.GetString();
+                            if (!string.IsNullOrEmpty(directLink)) break;
+                        }
+                    }
+                }
+
+                // If single file direct link
+                if (string.IsNullOrEmpty(directLink) && dataElem.TryGetProperty("link", out var directProp))
+                {
+                    directLink = directProp.GetString();
+                }
+
+                if (!string.IsNullOrEmpty(directLink))
+                {
+                    Console.WriteLine($"[Gofile] Enlace directo obtenido: {directLink}");
+                    try
+                    {
+                        cookieContainer.Add(new Uri(directLink), new Cookie("accountToken", token));
+                    }
+                    catch { }
+                    return directLink;
+                }
+            }
+
+            throw new Exception($"No se encontró ningún archivo descargable en la carpeta de Gofile ({contentId}).");
+        }
+
+        private async Task<string> ResolveGoogleDriveUrlAsync(HttpClient client, string url, CancellationToken ct)
         {
             string fileId = ExtractGoogleDriveId(url);
             if (string.IsNullOrEmpty(fileId))

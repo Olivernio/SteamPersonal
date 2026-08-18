@@ -2,13 +2,14 @@ import { useState, useCallback, useEffect, useReducer, useRef } from 'react';
 import { WindowHeader } from './components/WindowHeader';
 import { Sidebar, View } from './components/Sidebar';
 import { LibraryView } from './components/LibraryView';
-import { GameDetailView } from './components/GameDetailView';
+import { GameDetailView, isVersionEqual, isVersionInList } from './components/GameDetailView';
 import { DownloadsView, DownloadState } from './components/DownloadsView';
 import { SettingsView } from './components/SettingsView';
 import { ExploreView } from './components/ExploreView';
 import { AchievementToast } from './components/AchievementToast';
 import { Game, GAMES } from './data/games';
-import { fetchGamesFromSupabase } from './services/supabaseClient';
+import { fetchGamesFromSupabase, fetchGlobalSettings } from './services/supabaseClient';
+import type { VersionMirror } from './services/supabaseClient';
 import { onWebViewMessage, WebViewMessage, startDownload, launchGame } from './webview-bridge';
 
 // ── Download state reducer ─────────────────────────────────────
@@ -119,8 +120,8 @@ export default function App() {
 
               if (installation && installation.isInstalled && installation.installedVersions.length > 0) {
                 const isUpdated =
-                  installation.installedVersions.includes(g.latestVersion) ||
-                  installation.primaryVersion === g.latestVersion;
+                  isVersionInList(g.latestVersion, installation.installedVersions) ||
+                  isVersionEqual(installation.primaryVersion, g.latestVersion);
                 return {
                   ...g,
                   currentVersion: installation.primaryVersion || g.latestVersion,
@@ -129,7 +130,7 @@ export default function App() {
                   status: isUpdated ? 'updated' : 'update_available',
                 };
               } else if (installedVersion) {
-                const isUpdated = installedVersion === g.latestVersion;
+                const isUpdated = isVersionEqual(installedVersion, g.latestVersion);
                 return {
                   ...g,
                   currentVersion: installedVersion,
@@ -151,8 +152,8 @@ export default function App() {
             const installedVersion = msg.installedMap?.[prev.title];
             if (installation && installation.isInstalled && installation.installedVersions.length > 0) {
               const isUpdated =
-                installation.installedVersions.includes(prev.latestVersion) ||
-                installation.primaryVersion === prev.latestVersion;
+                isVersionInList(prev.latestVersion, installation.installedVersions) ||
+                isVersionEqual(installation.primaryVersion, prev.latestVersion);
               return {
                 ...prev,
                 currentVersion: installation.primaryVersion || prev.latestVersion,
@@ -161,7 +162,7 @@ export default function App() {
                 status: isUpdated ? 'updated' : 'update_available',
               };
             } else if (installedVersion) {
-              const isUpdated = installedVersion === prev.latestVersion;
+              const isUpdated = isVersionEqual(installedVersion, prev.latestVersion);
               return {
                 ...prev,
                 currentVersion: installedVersion,
@@ -183,10 +184,18 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  // ── Load games catalog from Supabase ─────────────────────────
+  // ── Load games catalog & global settings from Supabase ───────
+  const [globalSettings, setGlobalSettings] = useState<Record<string, string>>({});
+  const globalSettingsRef = useRef<Record<string, string>>({});
+
   const loadCatalog = useCallback(async () => {
-    const fetchedGames = await fetchGamesFromSupabase();
+    const [fetchedGames, fetchedSettings] = await Promise.all([
+      fetchGamesFromSupabase(),
+      fetchGlobalSettings()
+    ]);
     setGames(fetchedGames);
+    setGlobalSettings(fetchedSettings);
+    globalSettingsRef.current = fetchedSettings;
     if (window.chrome?.webview) {
       window.chrome.webview.postMessage({ action: 'CHECK_INSTALLATIONS', games: fetchedGames.map(g => g.title) });
     }
@@ -221,12 +230,36 @@ export default function App() {
     );
   }, []);
 
-  const handleStartDownload = useCallback((game: Game, version: string, customUrl?: string) => {
+  const handleStartDownload = useCallback((
+    game: Game,
+    version: string,
+    customUrl?: string,
+    selectedMirror?: VersionMirror
+  ) => {
     const targetUrl = customUrl || game.downloadUrl || 'https://drive.google.com/file/d/1BziDPAqWT5N5jV-5A2nB3d2Z5g7_wKk3/view';
-    
-    // Trigger C# download via WebView2 bridge
+
+    // Build the WebView2 message — attach mirror-specific recipe and gofile token
     if (window.chrome?.webview) {
-      window.chrome.webview.postMessage({ action: 'START_DOWNLOAD', url: targetUrl, gameTitle: game.title, version });
+      const userGofileToken = localStorage.getItem('user_gofile_token') || '';
+      const activeGofileToken = userGofileToken.trim() || globalSettingsRef.current['gofile_api_token'] || '';
+
+      const msg: Record<string, unknown> = {
+        action: 'START_DOWNLOAD',
+        url: targetUrl,
+        gameTitle: game.title,
+        version,
+      };
+
+      if (activeGofileToken) {
+        msg.gofileToken = activeGofileToken;
+      }
+
+      if (selectedMirror?.recipe_mode === 'override' && selectedMirror.recipe_steps?.length) {
+        msg.recipeSteps = selectedMirror.recipe_steps;
+        msg.mirrorProvider = selectedMirror.provider;
+      }
+
+      window.chrome.webview.postMessage(msg);
     }
 
     // Initialize state immediately in UI for instant responsiveness
