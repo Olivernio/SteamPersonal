@@ -103,7 +103,7 @@ namespace SteamPersonal.Services
                     {
                         case "stream_extract":
                             string url = !string.IsNullOrWhiteSpace(step.Url) ? step.Url : defaultDownloadUrl;
-                            await _downloader.StartStreamExtractAsync(url, installDir, recipe.Title, gofileToken);
+                            await _downloader.StartStreamExtractAsync(url, installDir, recipe.Title, gofileToken, versionTag);
                             break;
 
                         case "apply_crack":

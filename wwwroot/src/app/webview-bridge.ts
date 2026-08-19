@@ -115,6 +115,23 @@ export interface InstallationStatusMessage {
   installations?: Record<string, InstallationInfo>;
 }
 
+export interface PendingDownloadInfo {
+  gameTitle: string;
+  version: string;
+  sourceUrl: string;
+  destinationDir: string;
+  status: 'downloading' | 'paused';
+  filesCompleted: number;
+  bytesDownloaded: number;
+  totalBytesExpected: number;
+  progress: number; // 0-100, or -1 if unknown (files known but total size not recorded)
+}
+
+export interface PendingDownloadsMessage {
+  type: 'PENDING_DOWNLOADS';
+  pending: PendingDownloadInfo[];
+}
+
 export type WebViewMessage =
   | DownloadProgressMessage
   | DownloadCompletedMessage
@@ -127,7 +144,8 @@ export type WebViewMessage =
   | SavegameInfoResultMessage
   | AchievementUnlockedMessage
   | AchievementsDataResultMessage
-  | InstallationStatusMessage;
+  | InstallationStatusMessage
+  | PendingDownloadsMessage;
 
 // ── Send commands to C# backend ──────────────────────────────
 
@@ -146,6 +164,13 @@ export const launchGame     = (gameTitle: string, version?: string, gamePath?: s
 export const pauseDownload  = () => sendCommand('PAUSE_DOWNLOAD');
 export const resumeDownload = () => sendCommand('RESUME_DOWNLOAD');
 export const cancelDownload = () => sendCommand('CANCEL_DOWNLOAD');
+export const getPendingDownloads = () => sendCommand('GET_PENDING_DOWNLOADS');
+export const resumePendingDownload = (info: PendingDownloadInfo) => sendCommand('RESUME_PENDING_DOWNLOAD', {
+  sourceUrl: info.sourceUrl,
+  gameTitle: info.gameTitle,
+  version: info.version,
+  destinationDir: info.destinationDir,
+});
 export const getAchievements = (appId?: number, gameKey?: string, gameTitle?: string, savePattern?: string, gamePath?: string) => sendCommand('GET_ACHIEVEMENTS', { appId, gameKey, gameTitle, savePattern, gamePath });
 
 export const minimizeWindow = () => sendCommand('MINIMIZE_WINDOW');

@@ -571,6 +571,98 @@ namespace SteamPersonal
                 {
                     _downloader.Cancel();
                 }
+                else if (action == "GET_PENDING_DOWNLOADS")
+                {
+                    // Scan Juegos/ for folders with an incomplete download (.manifest.json)
+                    string juegosDir = Path.Combine(Directory.GetCurrentDirectory(), "Juegos");
+                    var pendingList = new List<object>();
+
+                    if (Directory.Exists(juegosDir))
+                    {
+                        foreach (var folder in Directory.GetDirectories(juegosDir))
+                        {
+                            string mfPath = Path.Combine(folder, ".manifest.json");
+                            if (!File.Exists(mfPath)) continue;
+
+                            try
+                            {
+                                string mfJson = File.ReadAllText(mfPath);
+                                var mf = JsonSerializer.Deserialize<SteamPersonal.Services.Models.DownloadManifest>(mfJson);
+                                if (mf == null) continue;
+
+                                // Skip corrupted or already completed manifests
+                                if (mf.Status == "completed") continue;
+
+                                double progress = (mf.TotalBytesExpected > 0)
+                                    ? (double)mf.BytesDownloaded / mf.TotalBytesExpected * 100
+                                    : (mf.CompletedFiles?.Count > 0 ? -1 : 0); // -1 = unknown %, files known
+
+                                pendingList.Add(new
+                                {
+                                    gameTitle = mf.GameTitle,
+                                    version = mf.Version,
+                                    sourceUrl = mf.SourceUrl,
+                                    destinationDir = mf.DestinationDir,
+                                    status = mf.Status,
+                                    filesCompleted = mf.CompletedFiles?.Count ?? 0,
+                                    bytesDownloaded = mf.BytesDownloaded,
+                                    totalBytesExpected = mf.TotalBytesExpected,
+                                    progress
+                                });
+                            }
+                            catch { /* skip corrupted manifest */ }
+                        }
+                    }
+
+                    SendToFrontend(new { type = "PENDING_DOWNLOADS", pending = pendingList });
+                }
+                else if (action == "RESUME_PENDING_DOWNLOAD")
+                {
+                    // Resume a previously interrupted/paused download from manifest data
+                    string resumeUrl = root.TryGetProperty("sourceUrl", out var suProp) ? suProp.GetString() ?? "" : "";
+                    string resumeTitle = root.TryGetProperty("gameTitle", out var rtProp) ? rtProp.GetString() ?? "" : "";
+                    string resumeVersion = root.TryGetProperty("version", out var rvProp) ? rvProp.GetString() ?? "" : "";
+                    string resumeDestDir = root.TryGetProperty("destinationDir", out var rdProp) ? rdProp.GetString() ?? "" : "";
+
+                    if (string.IsNullOrEmpty(resumeUrl) || string.IsNullOrEmpty(resumeDestDir))
+                    {
+                        SendToFrontend(new { type = "DOWNLOAD_FAILED", error = "Datos de reanudación incompletos." });
+                    }
+                    else
+                    {
+                        _currentGameTitle = resumeTitle;
+
+                        // Read gofile token from manifest if stored
+                        string? gofileToken = null;
+                        string mfPath = Path.Combine(resumeDestDir, ".manifest.json");
+                        if (File.Exists(mfPath))
+                        {
+                            try
+                            {
+                                var mfJson = File.ReadAllText(mfPath);
+                                var mf = JsonSerializer.Deserialize<SteamPersonal.Services.Models.DownloadManifest>(mfJson);
+                                gofileToken = mf?.GofileToken;
+                            }
+                            catch { }
+                        }
+
+                        // Build a minimal recipe that points straight to stream_extract
+                        var resumeRecipe = new SteamPersonal.Services.Models.InstallationRecipe
+                        {
+                            Title = resumeTitle,
+                            LatestOfficialVersion = resumeVersion
+                        };
+                        resumeRecipe.Steps.Add(new SteamPersonal.Services.Models.RecipeStep
+                        {
+                            Action = "stream_extract",
+                            Url = resumeUrl,
+                            Provider = "resume"
+                        });
+
+                        Console.WriteLine($"[Resume] Reanudando descarga de '{resumeTitle}' en '{resumeDestDir}'");
+                        _ = _recipeService.ExecuteRecipeAsync(resumeRecipe, resumeUrl, gofileToken);
+                    }
+                }
                 else if (action == "GET_ACHIEVEMENTS")
                 {
                     long appId = root.TryGetProperty("appId", out var appProp) && appProp.TryGetInt64(out long aVal) ? aVal : 0;
@@ -704,6 +796,16 @@ namespace SteamPersonal
             Dictionary<string, List<(string version, string path)>> index,
             string juegosDir)
         {
+            // ── Exclude folders with an ongoing/paused download ──
+            // A .manifest.json signals that extraction is incomplete.
+            // We must NOT report these as installed or the UI shows a false "Ready to play".
+            string downloadManifestPath = Path.Combine(folder, ".manifest.json");
+            if (File.Exists(downloadManifestPath))
+            {
+                Console.WriteLine($"[Index] Skipping incomplete download folder: {Path.GetFileName(folder)}");
+                return;
+            }
+
             string manifestPath = Path.Combine(folder, "sp_install.json");
 
             // ── Priority 1: sp_install.json ──────────────────────

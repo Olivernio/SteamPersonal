@@ -17,6 +17,18 @@ namespace SteamPersonal.Services.Models
         public string DestinationDir { get; set; } = string.Empty;
         public List<CompletedFileEntry> CompletedFiles { get; set; } = new();
         public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
+
+        // ── Progreso persistido para reanudación tras reinicio ──
+        /// <summary>Tamaño total del archivo comprimido en bytes (0 si desconocido).</summary>
+        public long TotalBytesExpected { get; set; }
+        /// <summary>Bytes del stream HTTP procesados hasta la última actualización.</summary>
+        public long BytesDownloaded { get; set; }
+        /// <summary>Estado: "downloading" | "paused" | "completed"</summary>
+        public string Status { get; set; } = "downloading";
+        /// <summary>Versión del juego que se está descargando (e.g. "v1.0.8").</summary>
+        public string Version { get; set; } = string.Empty;
+        /// <summary>Token de Gofile (si aplica) para poder reanudar sin pedírselo al usuario.</summary>
+        public string? GofileToken { get; set; }
     }
 
     public class CompletedFileEntry

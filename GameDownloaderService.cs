@@ -31,13 +31,17 @@ namespace SteamPersonal.Services
         private ManualResetEventSlim _pauseEvent = new ManualResetEventSlim(true);
         private Task? _activeTask;
 
-        // State preserved for display during pause
+        // State preserved for display during pause and cross-restart resume
         private string _activeUrl = "";
         private string _activeDestDir = "";
         private string _activeGameTitle = "";
+        private string _activeVersion = "";
+        private string? _activeGofileToken = null;
         private long _lastDownloadedBytes;
         private long _lastTotalBytes;
         private int _lastFilesCompleted;
+        private DownloadManifest? _activeManifest = null;
+        private int _manifestSaveCounter = 0;
 
         private const int MaxRetries = 5;
         private const int RetryDelayMs = 3000;
@@ -51,7 +55,7 @@ namespace SteamPersonal.Services
 
         // ── Public API ──────────────────────────────────────────
 
-        public async Task StartStreamExtractAsync(string url, string destinationDir, string gameTitle, string? gofileToken = null)
+        public async Task StartStreamExtractAsync(string url, string destinationDir, string gameTitle, string? gofileToken = null, string version = "")
         {
             // Cancel and wait for any previous task
             if (_activeTask != null && !_activeTask.IsCompleted)
@@ -64,9 +68,13 @@ namespace SteamPersonal.Services
             _activeUrl = url;
             _activeDestDir = destinationDir;
             _activeGameTitle = gameTitle;
+            _activeVersion = version;
+            _activeGofileToken = gofileToken;
             _lastDownloadedBytes = 0;
             _lastTotalBytes = 0;
             _lastFilesCompleted = 0;
+            _activeManifest = null;
+            _manifestSaveCounter = 0;
             _cts = new CancellationTokenSource();
             _pauseEvent.Set();
 
@@ -77,6 +85,16 @@ namespace SteamPersonal.Services
         public void Pause()
         {
             _pauseEvent.Reset(); // Blocks TrackedStream.Read() on next call
+
+            // Persist pause state to manifest so we can restore it after restart
+            if (_activeManifest != null)
+            {
+                _activeManifest.Status = "paused";
+                _activeManifest.BytesDownloaded = _lastDownloadedBytes;
+                _activeManifest.TotalBytesExpected = _lastTotalBytes;
+                try { ManifestHelper.Save(_activeManifest); } catch { }
+            }
+
             OnProgressUpdate(
                 _lastTotalBytes > 0 ? (double)_lastDownloadedBytes / _lastTotalBytes * 100 : 0,
                 _lastDownloadedBytes, _lastTotalBytes, 0, "", "Pausado", _lastFilesCompleted);
@@ -84,6 +102,12 @@ namespace SteamPersonal.Services
 
         public void Resume()
         {
+            // Update manifest status back to downloading
+            if (_activeManifest != null)
+            {
+                _activeManifest.Status = "downloading";
+                try { ManifestHelper.Save(_activeManifest); } catch { }
+            }
             _pauseEvent.Set(); // Unblocks TrackedStream.Read()
         }
 
@@ -128,14 +152,42 @@ namespace SteamPersonal.Services
                         GameTitle = gameTitle,
                         SourceUrl = url,
                         DestinationDir = destinationDir,
-                        CompletedFiles = new List<CompletedFileEntry>()
+                        CompletedFiles = new List<CompletedFileEntry>(),
+                        Status = "downloading",
+                        Version = _activeVersion,
+                        GofileToken = _activeGofileToken
                     };
+
+                    // Populate version/token from manifest if this is a resume
+                    if (string.IsNullOrEmpty(_activeVersion) && !string.IsNullOrEmpty(manifest.Version))
+                        _activeVersion = manifest.Version;
+                    if (_activeGofileToken == null && !string.IsNullOrEmpty(manifest.GofileToken))
+                        _activeGofileToken = manifest.GofileToken;
+
+                    // Mark as downloading (in case it was paused)
+                    manifest.Status = "downloading";
+                    manifest.Version = _activeVersion;
+                    manifest.GofileToken = _activeGofileToken;
+                    ManifestHelper.Save(manifest);
+
+                    _activeManifest = manifest;
                     var completedSet = ManifestHelper.BuildCompletedSet(manifest);
 
                     bool isResuming = completedSet.Count > 0;
+                    long resumeByteBaseline = isResuming ? manifest.BytesDownloaded : 0;
+
+                    // Pre-set progress counters from manifest for resume
+                    _lastFilesCompleted = completedSet.Count;
+
                     if (isResuming)
                     {
-                        OnProgressUpdate(0, 0, 0, 0, "",
+                        // Restore display state from where we left off
+                        _lastDownloadedBytes = resumeByteBaseline;
+                        _lastTotalBytes = manifest.TotalBytesExpected;
+
+                        double resumePct = _lastTotalBytes > 0
+                            ? (double)resumeByteBaseline / _lastTotalBytes * 100 : 0;
+                        OnProgressUpdate(resumePct, resumeByteBaseline, _lastTotalBytes, 0, "",
                             $"Reanudando... {completedSet.Count} archivos ya extraídos", completedSet.Count);
                     }
                     else
@@ -170,8 +222,26 @@ namespace SteamPersonal.Services
 
                     trackedStream.OnBytesRead += (bytesRead, total, speed) =>
                     {
+                        _lastTotalBytes = total ?? _lastTotalBytes;
+
+                        // During catch-up phase (re-downloading previously processed bytes),
+                        // suppress progress updates to avoid showing misleading 0%.
+                        // The UI keeps showing the resume baseline (~51%) until we catch up.
+                        if (isResuming && resumeByteBaseline > 0 && bytesRead < resumeByteBaseline)
+                        {
+                            return;
+                        }
+
                         _lastDownloadedBytes = bytesRead;
-                        _lastTotalBytes = total ?? 0;
+
+                        // Persist bytes every ~50 reads to survive unexpected shutdowns
+                        _manifestSaveCounter++;
+                        if (_activeManifest != null && _manifestSaveCounter % 50 == 0)
+                        {
+                            _activeManifest.BytesDownloaded = bytesRead;
+                            _activeManifest.TotalBytesExpected = total ?? 0;
+                            try { ManifestHelper.Save(_activeManifest); } catch { }
+                        }
 
                         double percentage = (total.HasValue && total.Value > 0)
                             ? (double)bytesRead / total.Value * 100 : 0;
@@ -201,11 +271,13 @@ namespace SteamPersonal.Services
                             // IReader automatically advances past entries that aren't read.
                             skippedCount++;
 
-                            if (skippedCount % 50 == 0)
+                            if (skippedCount % 10 == 0 || skippedCount == completedSet.Count)
                             {
-                                OnProgressUpdate(0, _lastDownloadedBytes, _lastTotalBytes, 0, "",
-                                    $"Omitiendo archivos ya extraídos ({skippedCount}/{completedSet.Count})...",
-                                    completedSet.Count);
+                                double skipPct = _lastTotalBytes > 0
+                                    ? (double)_lastDownloadedBytes / _lastTotalBytes * 100 : 0;
+                                OnProgressUpdate(skipPct, _lastDownloadedBytes, _lastTotalBytes, 0, "",
+                                    $"Reanudando: {skippedCount}/{completedSet.Count} archivos omitidos...",
+                                    _lastFilesCompleted);
                             }
                             continue;
                         }

@@ -10,7 +10,8 @@ import { AchievementToast } from './components/AchievementToast';
 import { Game, GAMES } from './data/games';
 import { fetchGamesFromSupabase, fetchGlobalSettings } from './services/supabaseClient';
 import type { VersionMirror } from './services/supabaseClient';
-import { onWebViewMessage, WebViewMessage, startDownload, launchGame } from './webview-bridge';
+import { onWebViewMessage, WebViewMessage, startDownload, launchGame, getPendingDownloads } from './webview-bridge';
+import type { PendingDownloadInfo } from './webview-bridge';
 
 // ── Download state reducer ─────────────────────────────────────
 
@@ -57,6 +58,7 @@ export default function App() {
   const [games, setGames] = useState<Game[]>(GAMES);
   const [syncing, setSyncing] = useState(false);
   const [downloadState, dispatchDownload] = useReducer(downloadReducer, null);
+  const [pendingDownloads, setPendingDownloads] = useState<PendingDownloadInfo[]>([]);
 
   const downloadStateRef = useRef(downloadState);
   useEffect(() => {
@@ -178,6 +180,15 @@ export default function App() {
             };
           });
           break;
+
+        case 'PENDING_DOWNLOADS':
+          setPendingDownloads(msg.pending);
+          // If there are pending downloads and we have no active download in RAM,
+          // auto-navigate to Downloads tab so the user is aware
+          if (msg.pending.length > 0 && downloadStateRef.current === null) {
+            setView('downloads');
+          }
+          break;
       }
     });
 
@@ -198,6 +209,8 @@ export default function App() {
     globalSettingsRef.current = fetchedSettings;
     if (window.chrome?.webview) {
       window.chrome.webview.postMessage({ action: 'CHECK_INSTALLATIONS', games: fetchedGames.map(g => g.title) });
+      // Also check for any downloads that were interrupted/paused before the app closed
+      getPendingDownloads();
     }
   }, []);
 
@@ -287,7 +300,8 @@ export default function App() {
   }, []);
 
   // Active download count for the sidebar badge
-  const activeDownloadCount = downloadState && !downloadState.completed && !downloadState.cancelled ? 1 : 0;
+  const activeDownloadCount = (downloadState && !downloadState.completed && !downloadState.cancelled ? 1 : 0)
+    + (pendingDownloads.length);
 
   const renderContent = () => {
     if (selectedGame) {
@@ -318,9 +332,40 @@ export default function App() {
         return (
           <DownloadsView
             download={downloadState}
+            pendingDownloads={pendingDownloads}
             onCancel={() => dispatchDownload({ type: 'SET_CANCELLED', value: true })}
             onReset={() => dispatchDownload({ type: 'RESET' })}
             onLaunchGame={handleLaunchGame}
+            onPendingResume={(info) => {
+              // Remove from pending list immediately for responsive UI
+              setPendingDownloads(prev => prev.filter(p => p.destinationDir !== info.destinationDir));
+              // Initialize download state in UI
+              dispatchDownload({
+                type: 'PROGRESS',
+                payload: {
+                  progress: info.progress >= 0 ? info.progress : 0,
+                  downloaded: info.bytesDownloaded,
+                  total: info.totalBytesExpected,
+                  speed: 0,
+                  file: '',
+                  status: 'Reanudando...',
+                  filesCompleted: info.filesCompleted,
+                  gameTitle: info.gameTitle,
+                },
+              });
+              // Tell backend to actually resume
+              window.chrome?.webview?.postMessage({
+                action: 'RESUME_PENDING_DOWNLOAD',
+                sourceUrl: info.sourceUrl,
+                gameTitle: info.gameTitle,
+                version: info.version,
+                destinationDir: info.destinationDir,
+              });
+            }}
+            onPendingCancel={(info) => {
+              setPendingDownloads(prev => prev.filter(p => p.destinationDir !== info.destinationDir));
+              window.chrome?.webview?.postMessage({ action: 'CANCEL_DOWNLOAD' });
+            }}
           />
         );
       case 'settings':

@@ -1,5 +1,6 @@
-import { Pause, X, Play, Wifi, HardDrive, Zap, Clock, CheckCircle, Download } from 'lucide-react';
+import { Pause, X, Play, Wifi, HardDrive, Zap, Clock, CheckCircle, Download, RotateCcw } from 'lucide-react';
 import { pauseDownload, resumeDownload, cancelDownload, formatBytes, formatSpeed } from '../webview-bridge';
+import type { PendingDownloadInfo } from '../webview-bridge';
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -18,18 +19,44 @@ export interface DownloadState {
 
 interface DownloadsViewProps {
   download: DownloadState | null;
+  pendingDownloads?: PendingDownloadInfo[];
   onCancel: () => void;
   onReset: () => void;
   onLaunchGame?: (gameTitle: string) => void;
+  onPendingResume?: (info: PendingDownloadInfo) => void;
+  onPendingCancel?: (info: PendingDownloadInfo) => void;
 }
 
 // ── Main Component ───────────────────────────────────────────
 
-export function DownloadsView({ download, onCancel, onReset, onLaunchGame }: DownloadsViewProps) {
+export function DownloadsView({ download, pendingDownloads = [], onCancel, onReset, onLaunchGame, onPendingResume, onPendingCancel }: DownloadsViewProps) {
   const dl = download;
 
-  // ── No active download → idle screen ─────────────────────
+  // ── No active download → show pending or idle ─────────────
   if (!dl) {
+    if (pendingDownloads.length > 0) {
+      return (
+        <div className="flex flex-col h-full">
+          <ViewHeader />
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {pendingDownloads.map((info) => (
+              <PendingDownloadCard
+                key={info.destinationDir}
+                info={info}
+                onResume={() => onPendingResume?.(info)}
+                onCancel={() => onPendingCancel?.(info)}
+              />
+            ))}
+          </div>
+          <style>{`
+            ::-webkit-scrollbar { width: 4px; }
+            ::-webkit-scrollbar-track { background: transparent; }
+            ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+          `}</style>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col h-full">
         <ViewHeader />
@@ -382,6 +409,134 @@ function EmptyQueueCard() {
       <div>
         <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '13px', fontWeight: 500 }}>Cola de descarga vacía</p>
         <p style={{ color: 'rgba(255,255,255,0.2)', fontSize: '11px' }}>Agrega juegos desde la Biblioteca</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Pending Download Card (restored from manifest after restart) ─
+
+interface PendingDownloadCardProps {
+  info: PendingDownloadInfo;
+  onResume: () => void;
+  onCancel: () => void;
+}
+
+function PendingDownloadCard({ info, onResume, onCancel }: PendingDownloadCardProps) {
+  const progressPct = info.progress >= 0 ? info.progress : null;
+  const isPaused = info.status === 'paused';
+  const statusLabel = isPaused ? 'PAUSADO' : 'INTERRUMPIDO';
+  const accentColor = '#EAB308'; // yellow for paused/interrupted
+
+  return (
+    <div
+      className="rounded-2xl overflow-hidden"
+      style={{ backgroundColor: '#151922', border: `1px solid rgba(234,179,8,0.25)` }}
+    >
+      {/* Header */}
+      <div
+        className="px-5 py-3 flex items-center justify-between"
+        style={{ borderBottom: '1px solid rgba(234,179,8,0.12)', backgroundColor: 'rgba(234,179,8,0.05)' }}
+      >
+        <div className="flex items-center gap-2">
+          <div
+            className="w-2 h-2 rounded-full"
+            style={{ backgroundColor: accentColor, boxShadow: `0 0 8px ${accentColor}` }}
+          />
+          <span style={{ color: accentColor, fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em' }}>
+            {statusLabel}
+          </span>
+          <span
+            className="px-2 py-0.5 rounded-md"
+            style={{ backgroundColor: 'rgba(34,197,94,0.15)', color: '#86EFAC', fontSize: '9px', fontWeight: 600 }}
+          >
+            {info.filesCompleted} archivos extraídos
+          </span>
+          {info.version && (
+            <span
+              className="px-2 py-0.5 rounded-md"
+              style={{ backgroundColor: 'rgba(99,102,241,0.15)', color: '#A5B4FC', fontSize: '9px', fontWeight: 600 }}
+            >
+              {info.version}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onResume}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all duration-200"
+            style={{
+              background: 'linear-gradient(135deg, rgba(234,179,8,0.2), rgba(234,179,8,0.1))',
+              border: '1px solid rgba(234,179,8,0.4)',
+              color: '#EAB308',
+              fontSize: '12px',
+              fontWeight: 600,
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(234,179,8,0.25)'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = ''; }}
+          >
+            <RotateCcw size={12} />
+            Reanudar
+          </button>
+          <button
+            onClick={onCancel}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all duration-200"
+            style={{
+              backgroundColor: 'rgba(239,68,68,0.08)',
+              border: '1px solid rgba(239,68,68,0.2)',
+              color: 'rgba(239,68,68,0.8)',
+              fontSize: '12px',
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(239,68,68,0.15)'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(239,68,68,0.08)'; }}
+          >
+            <X size={12} />
+            Cancelar
+          </button>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="p-5">
+        <h2 style={{ color: '#E2E8F0', fontSize: '18px', fontWeight: 700, marginBottom: '12px' }}>
+          {info.gameTitle}
+        </h2>
+
+        {/* Progress bar */}
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5" style={{ color: 'rgba(255,255,255,0.5)', fontSize: '12px' }}>
+              <HardDrive size={12} />
+              {info.totalBytesExpected > 0
+                ? <span>{formatBytes(info.bytesDownloaded)} / {formatBytes(info.totalBytesExpected)}</span>
+                : <span>{info.filesCompleted} archivos extraídos</span>
+              }
+            </div>
+            <span style={{ color: '#EAB308', fontSize: '14px', fontWeight: 700 }}>
+              {progressPct !== null ? `${progressPct.toFixed(1)}%` : `${info.filesCompleted} archivos`}
+            </span>
+          </div>
+
+          <div
+            className="w-full h-3 rounded-full overflow-hidden"
+            style={{ backgroundColor: 'rgba(255,255,255,0.07)' }}
+          >
+            <div
+              className="h-full rounded-full"
+              style={{
+                width: progressPct !== null ? `${progressPct}%` : '100%',
+                background: progressPct !== null
+                  ? 'linear-gradient(90deg, #EAB308, #CA8A04)'
+                  : 'repeating-linear-gradient(90deg, rgba(234,179,8,0.3) 0px, rgba(234,179,8,0.3) 20px, rgba(234,179,8,0.1) 20px, rgba(234,179,8,0.1) 40px)',
+                boxShadow: '0 0 12px rgba(234,179,8,0.4)',
+              }}
+            />
+          </div>
+        </div>
+
+        <p style={{ color: 'rgba(255,255,255,0.35)', fontSize: '12px' }}>
+          ⏸ Descarga {isPaused ? 'pausada' : 'interrumpida'} — Haz clic en <strong style={{ color: '#EAB308' }}>Reanudar</strong> para continuar desde donde se quedó
+        </p>
       </div>
     </div>
   );
