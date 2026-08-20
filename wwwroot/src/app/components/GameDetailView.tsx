@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { ArrowLeft, Play, Download, MessageSquare, Gamepad2, Calendar, HardDrive, ChevronDown, Monitor, Clock, Star, Package, Cloud, Settings, Info, Heart, Award, Building2, Megaphone, Upload, RefreshCw, X, FolderCheck, Flame, CheckCircle2, ArrowUpDown } from 'lucide-react';
 import { Game } from '../data/games';
 import { backupSavegame, restoreSavegame, getSavegameInfo, getAchievements, onWebViewMessage, formatBytes, WebViewMessage } from '../webview-bridge';
@@ -13,11 +13,198 @@ interface GameDetailViewProps {
   onLaunchGame?: (gameTitle: string, version?: string, gamePath?: string, appId?: number, gameKey?: string, savePattern?: string) => void;
 }
 
+export function parseSteamBBCodeToHtml(text: string): string {
+  if (!text) return '';
+  let str = text;
+
+  // Normalize line endings
+  str = str.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  // Escape HTML entities to prevent XSS before processing BBCode tags
+  str = str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // Headers: [h1], [h2], [h3], [h4]
+  str = str.replace(/\[h1\]([\s\S]*?)\[\/h1\]/gi, '<h3 class="text-sm font-bold text-indigo-300 mt-2.5 mb-1 flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm bg-indigo-400"></span>$1</h3>');
+  str = str.replace(/\[h2\]([\s\S]*?)\[\/h2\]/gi, '<h4 class="text-xs font-bold text-indigo-300 mt-2 mb-1 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>$1</h4>');
+  str = str.replace(/\[h3\]([\s\S]*?)\[\/h3\]/gi, '<h5 class="text-xs font-semibold text-slate-200 mt-1.5 mb-0.5">$1</h5>');
+  str = str.replace(/\[h4\]([\s\S]*?)\[\/h4\]/gi, '<h6 class="text-[11px] font-semibold text-slate-300 mt-1 mb-0.5">$1</h6>');
+
+  // Steam Lists: [list]...[/list] and [olist]...[/olist]
+  str = str.replace(/\[list\]([\s\S]*?)\[\/list\]/gi, (match, p1) => {
+    let itemsHtml = p1.replace(/\[\*\]\s*(?:\[p\])?([\s\S]*?)(?:\[\/p\])?(?=\[\*\]|\[\/\*\]|$)/gi, (m2: string, itemContent: string) => {
+      const clean = itemContent.replace(/\[\/\*\]/g, '').trim();
+      if (!clean) return '';
+      return `<li class="flex items-start gap-2 text-xs text-slate-300/90 leading-relaxed my-0.5"><span class="w-1.5 h-1.5 rounded-full bg-indigo-400/70 mt-1.5 shrink-0"></span><span class="flex-1">${clean}</span></li>`;
+    });
+    itemsHtml = itemsHtml.replace(/\[\/\*\]/g, '').trim();
+    return `<ul class="my-1.5 space-y-1 pl-1">${itemsHtml}</ul>`;
+  });
+
+  str = str.replace(/\[olist\]([\s\S]*?)\[\/olist\]/gi, (match, p1) => {
+    let counter = 1;
+    let itemsHtml = p1.replace(/\[\*\]\s*(?:\[p\])?([\s\S]*?)(?:\[\/p\])?(?=\[\*\]|\[\/\*\]|$)/gi, (m2: string, itemContent: string) => {
+      const clean = itemContent.replace(/\[\/\*\]/g, '').trim();
+      if (!clean) return '';
+      return `<li class="flex items-start gap-2 text-xs text-slate-300/90 leading-relaxed my-0.5"><span class="text-[10px] font-bold text-indigo-400 mt-0.5 shrink-0">${counter++}.</span><span class="flex-1">${clean}</span></li>`;
+    });
+    itemsHtml = itemsHtml.replace(/\[\/\*\]/g, '').trim();
+    return `<ol class="my-1.5 space-y-1 pl-1">${itemsHtml}</ol>`;
+  });
+
+  // Loose [*] list items
+  str = str.replace(/\[\*\]\s*(?:\[p\])?([\s\S]*?)(?:\[\/p\])?(?=\[\*\]|\[\/\*\]|$)/gi, (m, itemContent) => {
+    const clean = itemContent.replace(/\[\/\*\]/g, '').trim();
+    if (!clean) return '';
+    return `<div class="flex items-start gap-2 text-xs text-slate-300/90 leading-relaxed my-0.5"><span class="w-1.5 h-1.5 rounded-full bg-indigo-400/70 mt-1.5 shrink-0"></span><span class="flex-1">${clean}</span></div>`;
+  });
+
+  // Quote and Code blocks
+  str = str.replace(/\[quote(?:=([^\]]+))?\]([\s\S]*?)\[\/quote\]/gi, (m, author, quoteContent) => {
+    return `<blockquote class="border-l-2 border-indigo-500/50 pl-3 py-1.5 my-2 text-xs text-slate-300 bg-white/[0.02] rounded-r italic">${author ? `<div class="text-[10px] font-bold text-indigo-300 not-italic mb-1">${author} escribió:</div>` : ''}${quoteContent}</blockquote>`;
+  });
+  str = str.replace(/\[code\]([\s\S]*?)\[\/code\]/gi, '<pre class="bg-black/40 border border-white/10 rounded-lg p-2.5 font-mono text-[11px] text-indigo-200 overflow-x-auto my-1.5">$1</pre>');
+
+  // Inline tags: [b], [i], [u], [strike]
+  str = str.replace(/\[b\]([\s\S]*?)\[\/b\]/gi, '<strong class="font-bold text-slate-100">$1</strong>');
+  str = str.replace(/\[i\]([\s\S]*?)\[\/i\]/gi, '<em class="italic text-slate-300">$1</em>');
+  str = str.replace(/\[u\]([\s\S]*?)\[\/u\]/gi, '<span class="underline underline-offset-2">$1</span>');
+  str = str.replace(/\[strike\]([\s\S]*?)\[\/strike\]/gi, '<span class="line-through text-slate-400">$1</span>');
+
+  // URLs and Images
+  str = str.replace(/\[url=([^\]]+)\]([\s\S]*?)\[\/url\]/gi, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">$2</a>');
+  str = str.replace(/\[url\]([\s\S]*?)\[\/url\]/gi, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">$1</a>');
+  str = str.replace(/\[img\]([\s\S]*?)\[\/img\]/gi, '<img src="$1" alt="image" class="max-w-full rounded-lg my-2 max-h-80 object-contain border border-white/10" />');
+
+  // Spoilers & HR
+  str = str.replace(/\[spoiler\]([\s\S]*?)\[\/spoiler\]/gi, '<span class="bg-slate-800 hover:bg-slate-700/50 text-slate-800 hover:text-slate-200 rounded px-1.5 py-0.5 transition-all cursor-pointer select-none hover:select-text" title="Spoiler - Pasa el ratón para ver">$1</span>');
+  str = str.replace(/\[hr\/?\]/gi, '<div class="h-px bg-white/10 my-2.5"></div>');
+
+  // Paragraphs [p]...[/p]
+  str = str.replace(/\[p\]([\s\S]*?)\[\/p\]/gi, '<p class="text-xs text-slate-300/90 leading-relaxed my-1">$1</p>');
+
+  // Clean any leftover stray tags
+  str = str.replace(/\[\/?(list|olist|\*|\/\*|p|table|tr|th|td|previewyoutube)\]/gi, '');
+
+  // Line breaks
+  str = str.replace(/\n\n+/g, '<div class="h-1.5"></div>');
+  str = str.replace(/\n/g, '<br/>');
+
+  return str;
+}
+
+export function extractCleanVersion(raw?: string): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  const pureSemVer = trimmed.match(/^v?\.?\s*(\d+(\.\d+)+([a-z]|\-rc\d+|\-beta\d+|\-hotfix\d*|\.hotfix\d*)?)$/i);
+  if (pureSemVer) return `v${pureSemVer[1].replace(/^v\.?/i, '')}`;
+  const matchVer = trimmed.match(/\b(?:version|ver|v)\.?\s*#?\s*(\d+(\.\d+)+([a-z]|\-rc\d+|\-beta\d+|\-hotfix\d*|\.hotfix\d*)?)\b/i);
+  if (matchVer && matchVer[1]) return `v${matchVer[1]}`;
+  const matchNumbers = trimmed.match(/\b(\d+\.\d+(\.\d+)*)\b/);
+  if (matchNumbers && matchNumbers[1] && !/^\d{4}$/.test(matchNumbers[1])) return `v${matchNumbers[1]}`;
+  const matchBuild = trimmed.match(/\b(build\s*#?\s*\d+)\b/i);
+  if (matchBuild && matchBuild[1]) return matchBuild[1];
+  return trimmed;
+}
+
+const RichSteamNote = ({ title, body, notes, badgeVersion }: { title?: string; body?: string; notes?: string[]; badgeVersion?: string }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  let finalTitle = title?.trim() || '';
+  let finalBody = body?.trim() || '';
+
+  if (!finalTitle && !finalBody && notes && notes.length > 0) {
+    if (notes.length === 1) {
+      if (notes[0].length < 80 && !notes[0].includes('[') && !notes[0].includes('\n')) {
+        finalTitle = notes[0].trim();
+      } else {
+        finalBody = notes[0].trim();
+      }
+    } else {
+      finalTitle = notes[0].trim();
+      finalBody = notes.slice(1).join('\n\n').trim();
+    }
+  } else if (!finalBody && notes && notes.length > 1 && !finalTitle) {
+    finalTitle = notes[0].trim();
+    finalBody = notes.slice(1).join('\n\n').trim();
+  }
+
+  // If title was actually a body chunk
+  if (!finalBody && finalTitle && (finalTitle.includes('[h2]') || finalTitle.includes('[list]') || finalTitle.length > 120)) {
+    finalBody = finalTitle;
+    finalTitle = '';
+  }
+
+  // If title is redundant with badgeVersion (e.g. badge is v1.0.0 and title is "v1.0.0" or "Version 1.0.0")
+  if (finalTitle && badgeVersion) {
+    const normTitle = normalizeVersion(finalTitle);
+    const normBadge = normalizeVersion(badgeVersion);
+    if (normTitle && normBadge && normTitle === normBadge && finalTitle.length < 20) {
+      finalTitle = '';
+    }
+  }
+
+  const parsedHtml = useMemo(() => {
+    return parseSteamBBCodeToHtml(finalBody);
+  }, [finalBody]);
+
+  if (!finalTitle && !finalBody) return null;
+
+  const isLong = finalBody.length > 140 || finalBody.includes('[h2]') || finalBody.includes('[list]') || finalBody.includes('\n');
+
+  return (
+    <div className="w-full space-y-1.5 pt-0.5">
+      {finalTitle && (
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
+          <Megaphone size={13} className="text-indigo-400 shrink-0" />
+          <span>{finalTitle}</span>
+        </div>
+      )}
+
+      {finalBody && (
+        <div className="w-full">
+          <div
+            className={`transition-all duration-200 overflow-hidden ${
+              !expanded && isLong ? 'max-h-20 relative' : 'max-h-none'
+            }`}
+          >
+            <div
+              className="text-xs text-slate-300/90 leading-relaxed"
+              dangerouslySetInnerHTML={{ __html: parsedHtml }}
+            />
+            {!expanded && isLong && (
+              <div
+                className="absolute bottom-0 left-0 right-0 h-10 pointer-events-none"
+                style={{
+                  background: 'linear-gradient(to top, rgba(21, 25, 34, 1) 0%, rgba(21, 25, 34, 0) 100%)'
+                }}
+              />
+            )}
+          </div>
+
+          {isLong && (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="text-xs font-semibold hover:underline mt-1 flex items-center gap-1 cursor-pointer transition-colors"
+              style={{ color: '#818CF8' }}
+            >
+              <span>{expanded ? 'Mostrar menos' : 'Leer más...'}</span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ExpandableText = ({ text, lines = 3 }: { text: string, lines?: number }) => {
   const [expanded, setExpanded] = useState(false);
+  const parsedHtml = useMemo(() => parseSteamBBCodeToHtml(text), [text]);
   if (!text) return null;
-  if (text.length <= 150) {
-    return <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{text}</div>;
+  if (text.length <= 150 && !text.includes('[') && !text.includes('\n')) {
+    return <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} dangerouslySetInnerHTML={{ __html: parsedHtml }} />;
   }
   return (
     <div className="flex flex-col items-start gap-1 w-full">
@@ -27,15 +214,13 @@ const ExpandableText = ({ text, lines = 3 }: { text: string, lines?: number }) =
           WebkitLineClamp: expanded ? 'unset' : lines,
           WebkitBoxOrient: 'vertical',
           overflow: 'hidden',
-          whiteSpace: 'pre-wrap',
           wordBreak: 'break-word'
         }}
-      >
-        {text}
-      </div>
+        dangerouslySetInnerHTML={{ __html: parsedHtml }}
+      />
       <button 
         onClick={() => setExpanded(!expanded)}
-        className="text-xs font-semibold hover:underline mt-1"
+        className="text-xs font-semibold hover:underline mt-1 cursor-pointer"
         style={{ color: '#818CF8' }}
       >
         {expanded ? 'Mostrar menos' : 'Leer más...'}
@@ -46,7 +231,8 @@ const ExpandableText = ({ text, lines = 3 }: { text: string, lines?: number }) =
 
 export function normalizeVersion(ver?: string): string {
   if (!ver) return '';
-  return ver.toLowerCase().replace(/^(version|ver|v)\.?\s*/i, '').trim();
+  const clean = extractCleanVersion(ver);
+  return clean.toLowerCase().replace(/^(version|ver|v)\.?\s*/i, '').trim();
 }
 
 export function isVersionEqual(v1?: string, v2?: string): boolean {
@@ -88,6 +274,22 @@ export function GameDetailView({ game, onBack, onRequestUpdate, onStartDownload,
   const isSelectedInstalled = Boolean(selectedVersion && isVersionInList(selectedVersion, installedList));
 
   const [versionOpen, setVersionOpen] = useState(false);
+  const versionDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (versionDropdownRef.current && !versionDropdownRef.current.contains(event.target as Node)) {
+        setVersionOpen(false);
+      }
+    };
+    if (versionOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [versionOpen]);
+
   const [requestSent, setRequestSent] = useState(false);
   const [requestCount, setRequestCount] = useState(game.requestCount);
   const [activeScreenshot, setActiveScreenshot] = useState(0);
@@ -293,7 +495,8 @@ function isRealGameVersion(v: {
 
 function formatVersionDisplay(ver: string): string {
   if (!ver) return 'v1.0';
-  const trimmed = ver.trim();
+  const clean = extractCleanVersion(ver);
+  const trimmed = clean.trim();
   if (/^v\.\d/i.test(trimmed)) {
     return 'v' + trimmed.slice(2);
   }
@@ -303,13 +506,16 @@ function formatVersionDisplay(ver: string): string {
   return trimmed;
 }
 
-function compareVersions(vA: string, vB: string): number {
+function compareVersions(vA?: string, vB?: string): number {
   if (!vA && !vB) return 0;
   if (!vA) return -1;
   if (!vB) return 1;
 
-  const cleanA = vA.replace(/^v\.?/i, '').trim();
-  const cleanB = vB.replace(/^v\.?/i, '').trim();
+  const verA = extractCleanVersion(vA);
+  const verB = extractCleanVersion(vB);
+
+  const cleanA = verA.replace(/^v\.?/i, '').trim();
+  const cleanB = verB.replace(/^v\.?/i, '').trim();
 
   const partsA = cleanA.split(/[\.\-\s]/).filter(Boolean);
   const partsB = cleanB.split(/[\.\-\s]/).filter(Boolean);
@@ -325,8 +531,8 @@ function compareVersions(vA: string, vB: string): number {
     const numA = parseInt(rawA, 10);
     const numB = parseInt(rawB, 10);
 
-    const isNumA = !isNaN(numA) && String(numA) === rawA;
-    const isNumB = !isNaN(numB) && String(numB) === rawB;
+    const isNumA = !isNaN(numA) && /^\d+$/.test(rawA);
+    const isNumB = !isNaN(numB) && /^\d+$/.test(rawB);
 
     if (isNumA && isNumB) {
       if (numA !== numB) return numA - numB; // De menor a mayor (ascending: 1 < 2 < 10 < 13)
@@ -396,6 +602,8 @@ function compareVersions(vA: string, vB: string): number {
     const list: {
       version: string;
       date?: string;
+      title?: string;
+      body?: string;
       notes?: string[];
       downloadUrl?: string;
       isAvailable: boolean;
@@ -453,6 +661,8 @@ function compareVersions(vA: string, vB: string): number {
         list.push({
           version: av.version,
           date: av.releaseDate,
+          title: av.changelogTitle,
+          body: av.changelogBody,
           notes: notesList.length > 0 ? notesList : undefined,
           downloadUrl: av.url || av.downloadUrl,
           isAvailable: hasUrl,
@@ -496,264 +706,122 @@ function compareVersions(vA: string, vB: string): number {
     });
   }, [game.availableVersions, installedList, game.downloadUrl, game.latestVersion, hasInstalled, showAllVersions, versionSortOrder]);
 
-  const renderActionPanel = () => {
-    return (
-      <div className="space-y-4">
-        {/* Main Action Area */}
-        {hasInstalled ? (
-          <div className="space-y-3">
-            {/* If selected version is installed, Play is the primary button */}
-            {isSelectedInstalled ? (
-              <button
-                onClick={() => handleLaunch(selectedVersion)}
-                className="w-full flex items-center justify-center gap-3 py-4 rounded-2xl transition-all duration-200 group cursor-pointer shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40"
-                style={{
-                  background: 'linear-gradient(135deg, #059669, #10B981)',
-                  fontSize: '16px',
-                  fontWeight: 700,
-                  color: '#fff',
-                  letterSpacing: '0.05em',
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)'; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
-              >
-                <Play size={20} fill="currentColor" />
-                JUGAR {installedList.length > 1 ? `(${selectedVersion})` : ''}
-              </button>
-            ) : selectedHasDownload ? (
-              /* If user selected an uninstalled version to download/install */
-              <button
-                onClick={() => handleDownload(selectedVersion)}
-                className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl transition-all duration-200 cursor-pointer shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40 relative overflow-hidden group"
-                style={{
-                  background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
-                  color: '#fff',
-                  fontSize: '15px',
-                  fontWeight: 700,
-                  letterSpacing: '0.04em',
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)'; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
-              >
-                <Download size={18} />
-                INSTALAR {selectedVersion}
-              </button>
-            ) : (
-              /* If user selected an uninstalled version that has no download link */
-              <button
-                onClick={() => {
-                  setRequestVersionTarget(selectedVersion);
-                  setRequestModalOpen(true);
-                }}
-                className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl transition-all duration-200 cursor-pointer shadow-lg shadow-amber-500/20 hover:shadow-amber-500/40 relative overflow-hidden group"
-                style={{
-                  background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
-                  color: '#fff',
-                  fontSize: '14px',
-                  fontWeight: 700,
-                }}
-              >
-                <Flame size={16} />
-                SOLICITAR VERSIÓN {selectedVersion}
-              </button>
-            )}
+  const renderVersionDropdownMenu = () => (
+    <div
+      className="absolute top-full left-0 mt-2 py-1.5 rounded-xl z-50 min-w-[280px] shadow-2xl animate-in fade-in zoom-in duration-150 select-none"
+      style={{
+        backgroundColor: '#1E2532',
+        border: '1px solid rgba(255,255,255,0.12)',
+        boxShadow: '0 16px 36px rgba(0,0,0,0.7)',
+        maxHeight: '300px',
+        overflowY: 'auto'
+      }}
+    >
+      <div className="px-3 py-2 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-white/5 flex items-center justify-between">
+        <span>Versiones ({availableVersionsList.length})</span>
+        <span className="text-[10px] text-gray-400 font-semibold">{hasInstalled ? `${installedList.length} instalada(s)` : 'No instalada'}</span>
+      </div>
+      {availableVersionsList.map((v) => (
+        <button
+          key={v.value}
+          className="w-full text-left px-3 py-2.5 transition-all duration-150 truncate flex items-center justify-between cursor-pointer"
+          style={{
+            color: selectedVersion === v.value ? '#A5B4FC' : 'rgba(255,255,255,0.8)',
+            fontSize: '12px',
+            backgroundColor: selectedVersion === v.value ? 'rgba(99,102,241,0.2)' : 'transparent',
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedVersion(v.value);
+            setVersionOpen(false);
+          }}
+          onMouseEnter={(e) => {
+            if (selectedVersion !== v.value) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.06)';
+          }}
+          onMouseLeave={(e) => {
+            if (selectedVersion !== v.value) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent';
+          }}
+        >
+          <span className="truncate">{v.label}</span>
+          {v.isInstalled && (
+            <span className="text-[10px] text-emerald-400 font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 ml-2 shrink-0">
+              Instalada
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
 
-            {/* If there's an update available in the catalog and it's not the installed latest */}
-            {!isLatestInstalled && isSelectedInstalled && anyDownloadable && (
-              <button
-                onClick={() => {
-                  setSelectedVersion(anyDownloadable.version);
-                  handleDownload(anyDownloadable.version);
-                }}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all duration-200 cursor-pointer hover:bg-indigo-600/30"
-                style={{
-                  backgroundColor: 'rgba(99,102,241,0.15)',
-                  border: '1px solid rgba(99,102,241,0.35)',
-                  color: '#A5B4FC',
-                  fontSize: '13px',
-                  fontWeight: 700,
-                }}
-              >
-                <Download size={15} />
-                Actualizar a {anyDownloadable.version}
-              </button>
-            )}
-
-            {/* If user selected a non-installed version, allow playing the installed one easily */}
-            {!isSelectedInstalled && installedList.length > 0 && (
-              <button
-                onClick={() => handleLaunch(installedList[0])}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl transition-colors hover:bg-white/10 cursor-pointer"
-                style={{
-                  backgroundColor: 'rgba(255,255,255,0.05)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  color: 'rgba(255,255,255,0.85)',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                }}
-              >
-                <Play size={14} fill="currentColor" />
-                Jugar versión instalada ({installedList[0]})
-              </button>
-            )}
-          </div>
+  const renderPrimaryActionGroup = () => (
+    <div className="relative" ref={versionDropdownRef}>
+      <div className="flex items-center rounded-lg overflow-hidden shrink-0 shadow-md">
+        {hasInstalled && isSelectedInstalled ? (
+          <button
+            onClick={() => handleLaunch(selectedVersion)}
+            className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
+            style={{
+              background: 'linear-gradient(135deg, #10B981, #059669)',
+              color: '#fff',
+              fontSize: '14px',
+              fontWeight: 800,
+              letterSpacing: '0.06em',
+            }}
+          >
+            <Play size={16} fill="currentColor" />
+            JUGAR {installedList.length > 1 ? `(${selectedVersion})` : ''}
+          </button>
         ) : selectedHasDownload ? (
-          <div className="space-y-3">
-            <button
-              onClick={() => handleDownload(selectedVersion)}
-              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl transition-all duration-200 cursor-pointer shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/40 relative overflow-hidden group"
-              style={{
-                background: 'linear-gradient(135deg, #6366F1 0%, #4F46E5 100%)',
-                color: '#fff',
-                fontSize: '15px',
-                fontWeight: 700,
-                letterSpacing: '0.04em',
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1.02)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
-            >
-              <Download size={18} />
-              INSTALAR {selectedVersion}
-            </button>
-          </div>
+          <button
+            onClick={() => handleDownload(selectedVersion)}
+            className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
+            style={{
+              background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
+              color: '#fff',
+              fontSize: '14px',
+              fontWeight: 800,
+              letterSpacing: '0.06em',
+            }}
+          >
+            <Download size={16} />
+            INSTALAR {selectedVersion}
+          </button>
         ) : (
-          <div className="space-y-3">
-            <button
-              className="w-full flex items-center justify-center gap-3 py-3.5 rounded-2xl transition-all duration-300 cursor-pointer"
-              style={{
-                background: requestSent
-                  ? 'rgba(99,102,241,0.15)'
-                  : 'linear-gradient(135deg, #F59E0B, #D97706)',
-                border: requestSent ? '1px solid rgba(99,102,241,0.3)' : 'none',
-                boxShadow: requestSent ? 'none' : '0 8px 24px rgba(245,158,11,0.35)',
-                fontSize: '14px',
-                fontWeight: 700,
-                color: requestSent ? '#A5B4FC' : '#fff',
-                letterSpacing: '0.03em',
-              }}
-              onClick={() => {
-                setRequestVersionTarget(selectedVersion);
-                setRequestModalOpen(true);
-              }}
-              disabled={requestSent}
-            >
-              <Flame size={17} />
-              {requestSent ? '✓ Solicitud enviada' : `🔥 SOLICITAR VERSIÓN ${selectedVersion}`}
-            </button>
-
-            {anyDownloadable && anyDownloadable.version !== selectedVersion && (
-              <button
-                onClick={() => {
-                  setSelectedVersion(anyDownloadable.version);
-                  handleDownload(anyDownloadable.version);
-                }}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all duration-200 cursor-pointer hover:bg-indigo-600/30"
-                style={{
-                  backgroundColor: 'rgba(99,102,241,0.15)',
-                  border: '1px solid rgba(99,102,241,0.35)',
-                  color: '#A5B4FC',
-                  fontSize: '13px',
-                  fontWeight: 700,
-                }}
-              >
-                <Download size={14} />
-                Instalar versión disponible ({anyDownloadable.version})
-              </button>
-            )}
-          </div>
+          <button
+            onClick={() => {
+              setRequestVersionTarget(selectedVersion);
+              setRequestModalOpen(true);
+            }}
+            disabled={requestSent}
+            className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
+            style={{
+              background: requestSent ? 'rgba(99,102,241,0.2)' : 'linear-gradient(135deg, #F59E0B, #D97706)',
+              color: '#fff',
+              fontSize: '13px',
+              fontWeight: 800,
+            }}
+          >
+            <Flame size={16} />
+            {requestSent ? 'SOLICITADO' : `SOLICITAR ${selectedVersion}`}
+          </button>
         )}
 
-        <div className="h-px w-full my-4" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }} />
-        <div className="space-y-2">
-          <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-            <div>
-              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>
-                {installedList.length > 1 ? `Versiones Instaladas (${installedList.length})` : 'Versión Instalada'}
-              </div>
-              <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>
-                {installedList.length > 0 ? installedList.join(', ') : 'Ninguna'}
-              </div>
-            </div>
-            {hasInstalled && isLatestInstalled && (
-               <div className="px-2 py-1 rounded-md" style={{ backgroundColor: 'rgba(16,185,129,0.15)', color: '#10B981', fontSize: '10px', fontWeight: 700 }}>Al Día</div>
-            )}
-            {hasInstalled && !isLatestInstalled && (
-               <div className="px-2 py-1 rounded-md" style={{ backgroundColor: 'rgba(234,179,8,0.15)', color: '#EAB308', fontSize: '10px', fontWeight: 700 }}>Update Disponible</div>
-            )}
-            {!hasInstalled && (
-               <div className="px-2 py-1 rounded-md" style={{ backgroundColor: 'rgba(148,163,184,0.1)', color: '#94A3B8', fontSize: '10px', fontWeight: 600 }}>No Instalado</div>
-            )}
-          </div>
-
-          <div className="flex justify-between items-center p-3 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
-            <div>
-              <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>Última de Steam / Servidor</div>
-              <div style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>{game.latestVersion || 'No disponible'}</div>
-            </div>
-            <RefreshCw size={12} className="text-gray-500" />
-          </div>
-        </div>
-
-        {/* Change Version Dropdown */}
-        <div className="mt-4 pt-2">
-          <label style={{ color: 'rgba(255,255,255,0.5)', fontSize: '10px', fontWeight: 600, letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>
-            SELECCIONAR VERSIÓN ({availableVersionsList.length})
-          </label>
-          <div className="relative">
-            <button
-              onClick={() => setVersionOpen(!versionOpen)}
-              className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all duration-200"
-              style={{
-                backgroundColor: 'rgba(255,255,255,0.04)',
-                border: versionOpen ? '1px solid rgba(99,102,241,0.5)' : '1px solid rgba(255,255,255,0.08)',
-                color: '#E2E8F0',
-                fontSize: '13px',
-              }}
-            >
-              <span className="truncate pr-2 font-medium">
-                {selectedVersion} {isSelectedInstalled ? '✓ (Instalada)' : ''}
-              </span>
-              <ChevronDown size={14} style={{ color: 'rgba(255,255,255,0.4)', transform: versionOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', flexShrink: 0 }} />
-            </button>
-            {versionOpen && (
-              <div
-                className="absolute top-full left-0 right-0 mt-2 py-1.5 rounded-xl z-20"
-                style={{
-                  backgroundColor: '#1E2532',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  boxShadow: '0 12px 32px rgba(0,0,0,0.6)',
-                  maxHeight: '200px',
-                  overflowY: 'auto'
-                }}
-              >
-                {availableVersionsList.map((v) => (
-                  <button
-                    key={v.value}
-                    className="w-full text-left px-3 py-2.5 transition-all duration-150 truncate flex items-center justify-between"
-                    style={{
-                      color: selectedVersion === v.value ? '#A5B4FC' : 'rgba(255,255,255,0.7)',
-                      fontSize: '12px',
-                      backgroundColor: selectedVersion === v.value ? 'rgba(99,102,241,0.15)' : 'transparent',
-                    }}
-                    onClick={() => { setSelectedVersion(v.value); setVersionOpen(false); }}
-                    onMouseEnter={(e) => { if (selectedVersion !== v.value) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'rgba(255,255,255,0.05)'; }}
-                    onMouseLeave={(e) => { if (selectedVersion !== v.value) (e.currentTarget as HTMLButtonElement).style.backgroundColor = 'transparent'; }}
-                  >
-                    <span className="truncate">{v.label}</span>
-                    {v.isInstalled && (
-                      <span className="text-[10px] text-emerald-400 font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 ml-2 shrink-0">
-                        Instalada
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        <button
+          onClick={() => setVersionOpen(!versionOpen)}
+          className="px-2.5 py-2.5 flex items-center justify-center transition-colors cursor-pointer"
+          style={{
+            backgroundColor: hasInstalled && isSelectedInstalled ? '#047857' : '#4338CA',
+            color: 'rgba(255,255,255,0.85)',
+          }}
+          title="Seleccionar versión"
+        >
+          <ChevronDown size={14} style={{ transform: versionOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+        </button>
       </div>
-    );
-  };
+
+      {versionOpen && renderVersionDropdownMenu()}
+    </div>
+  );
 
   return (
     <div
@@ -827,104 +895,7 @@ function compareVersions(vA: string, vB: string): number {
         {isScrolled ? (
           /* Transformed Sticky Layout: [ Button | Larger Icon | Title ] */
           <div className="flex items-center gap-4 min-w-0">
-            {/* Primary Action Button */}
-            <div className="flex items-center rounded-lg overflow-hidden shrink-0">
-              {hasInstalled && isSelectedInstalled ? (
-                <button
-                  onClick={() => handleLaunch(selectedVersion)}
-                  className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
-                  style={{
-                    background: 'linear-gradient(135deg, #10B981, #059669)',
-                    color: '#fff',
-                    fontSize: '14px',
-                    fontWeight: 800,
-                    letterSpacing: '0.06em',
-                  }}
-                >
-                  <Play size={16} fill="currentColor" />
-                  JUGAR {installedList.length > 1 ? `(${selectedVersion})` : ''}
-                </button>
-              ) : hasInstalled && !isSelectedInstalled ? (
-                selectedHasDownload ? (
-                  <button
-                    onClick={() => handleDownload(selectedVersion)}
-                    className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
-                    style={{
-                      background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
-                      color: '#fff',
-                      fontSize: '14px',
-                      fontWeight: 800,
-                      letterSpacing: '0.06em',
-                    }}
-                  >
-                    <Download size={16} />
-                    INSTALAR {selectedVersion}
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => {
-                      setRequestVersionTarget(selectedVersion);
-                      setRequestModalOpen(true);
-                    }}
-                    className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
-                    style={{
-                      background: 'linear-gradient(135deg, #F59E0B, #D97706)',
-                      color: '#fff',
-                      fontSize: '13px',
-                      fontWeight: 800,
-                    }}
-                  >
-                    <Flame size={16} />
-                    SOLICITAR {selectedVersion}
-                  </button>
-                )
-              ) : selectedHasDownload ? (
-                <button
-                  onClick={() => handleDownload(selectedVersion)}
-                  className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
-                  style={{
-                    background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
-                    color: '#fff',
-                    fontSize: '14px',
-                    fontWeight: 800,
-                    letterSpacing: '0.06em',
-                  }}
-                >
-                  <Download size={16} />
-                  INSTALAR {selectedVersion}
-                </button>
-              ) : (
-                <button
-                  onClick={() => {
-                    setRequestVersionTarget(selectedVersion);
-                    setRequestModalOpen(true);
-                  }}
-                  disabled={requestSent}
-                  className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
-                  style={{
-                    background: requestSent ? 'rgba(99,102,241,0.2)' : 'linear-gradient(135deg, #F59E0B, #D97706)',
-                    color: '#fff',
-                    fontSize: '13px',
-                    fontWeight: 700,
-                  }}
-                >
-                  <Flame size={16} />
-                  {requestSent ? 'SOLICITADO' : `SOLICITAR ${selectedVersion}`}
-                </button>
-              )}
-
-              <button
-                onClick={() => setVersionOpen(!versionOpen)}
-                className="px-2.5 py-2.5 flex items-center justify-center transition-colors"
-                style={{
-                  backgroundColor: hasInstalled && isSelectedInstalled ? '#047857' : '#4338CA',
-                  color: 'rgba(255,255,255,0.8)',
-                  cursor: 'pointer'
-                }}
-              >
-                <ChevronDown size={14} />
-              </button>
-            </div>
+            {renderPrimaryActionGroup()}
 
             {/* Larger Game Icon */}
             <img
@@ -941,119 +912,7 @@ function compareVersions(vA: string, vB: string): number {
         ) : (
           /* Full Original Layout: [ Button | Cloud | Last Session | Playtime | Achievements ] */
           <div className="flex items-center gap-6">
-            {/* Main Action Button (Play / Download / Update) */}
-            <div className="flex items-center rounded-lg overflow-hidden shrink-0">
-              {hasInstalled && isSelectedInstalled ? (
-                <button
-                  onClick={() => handleLaunch(selectedVersion)}
-                  className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
-                  style={{
-                    background: 'linear-gradient(135deg, #10B981, #059669)',
-                    color: '#fff',
-                    fontSize: '14px',
-                    fontWeight: 800,
-                    letterSpacing: '0.06em',
-                  }}
-                >
-                  <Play size={16} fill="currentColor" />
-                  JUGAR {installedList.length > 1 ? `(${selectedVersion})` : ''}
-                </button>
-              ) : hasInstalled && !isSelectedInstalled ? (
-                <button
-                  onClick={() => handleDownload(selectedVersion)}
-                  className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
-                  style={{
-                    background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
-                    color: '#fff',
-                    fontSize: '14px',
-                    fontWeight: 800,
-                    letterSpacing: '0.06em',
-                  }}
-                >
-                  <Download size={16} />
-                  INSTALAR {selectedVersion}
-                </button>
-              ) : hasInstalled && !isSelectedInstalled ? (
-                selectedHasDownload ? (
-                  <button
-                    onClick={() => handleDownload(selectedVersion)}
-                    className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
-                    style={{
-                      background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
-                      color: '#fff',
-                      fontSize: '14px',
-                      fontWeight: 800,
-                      letterSpacing: '0.06em',
-                    }}
-                  >
-                    <Download size={16} />
-                    INSTALAR {selectedVersion}
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => {
-                      setRequestVersionTarget(selectedVersion);
-                      setRequestModalOpen(true);
-                    }}
-                    className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
-                    style={{
-                      background: 'linear-gradient(135deg, #F59E0B, #D97706)',
-                      color: '#fff',
-                      fontSize: '13px',
-                      fontWeight: 800,
-                    }}
-                  >
-                    <Flame size={16} />
-                    SOLICITAR {selectedVersion}
-                  </button>
-                )
-              ) : selectedHasDownload ? (
-                <button
-                  onClick={() => handleDownload(selectedVersion)}
-                  className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
-                  style={{
-                    background: 'linear-gradient(135deg, #6366F1, #4F46E5)',
-                    color: '#fff',
-                    fontSize: '14px',
-                    fontWeight: 800,
-                    letterSpacing: '0.06em',
-                  }}
-                >
-                  <Download size={16} />
-                  INSTALAR {selectedVersion}
-                </button>
-              ) : (
-                <button
-                  onClick={() => {
-                    setRequestVersionTarget(selectedVersion);
-                    setRequestModalOpen(true);
-                  }}
-                  disabled={requestSent}
-                  className="flex items-center gap-2.5 px-6 py-2.5 transition-all duration-200 cursor-pointer"
-                  style={{
-                    background: requestSent ? 'rgba(99,102,241,0.2)' : 'linear-gradient(135deg, #F59E0B, #D97706)',
-                    color: '#fff',
-                    fontSize: '13px',
-                    fontWeight: 700,
-                  }}
-                >
-                  <Flame size={16} />
-                  {requestSent ? 'SOLICITADO' : `SOLICITAR ${selectedVersion}`}
-                </button>
-              )}
-
-              <button
-                onClick={() => setVersionOpen(!versionOpen)}
-                className="px-2.5 py-2.5 flex items-center justify-center transition-colors"
-                style={{
-                  backgroundColor: hasInstalled && isSelectedInstalled ? '#047857' : '#4338CA',
-                  color: 'rgba(255,255,255,0.8)',
-                  cursor: 'pointer'
-                }}
-              >
-                <ChevronDown size={14} />
-              </button>
-            </div>
+            {renderPrimaryActionGroup()}
 
             {/* Metric 1: Estado Cloud (Interactive Modal Trigger) */}
             <button
@@ -1345,11 +1204,8 @@ function compareVersions(vA: string, vB: string): number {
       </div>
 
       {/* Content Area */}
-      <div>
-        <div className="flex gap-6 p-6">
-          {/* Left column - main content */}
-          <div className="flex-1 min-w-0 space-y-5">
-            {subTab === 'achievements' ? (
+      <div className="w-full px-8 py-6 space-y-6">
+        {subTab === 'achievements' ? (
               /* Achievements Sub-Tab View */
               <div
                 className="p-5 rounded-2xl space-y-4"
@@ -1375,7 +1231,7 @@ function compareVersions(vA: string, vB: string): number {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[500px] overflow-y-auto pr-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[500px] overflow-y-auto pr-2">
                   {achievementsState.list.map((ach) => (
                     <div
                       key={ach.apiName}
@@ -1670,17 +1526,10 @@ function compareVersions(vA: string, vB: string): number {
                           </div>
 
                           {/* Notes if available */}
-                          {item.notes && item.notes.length > 0 && (
-                            <ul className="space-y-1 pl-1 pt-1 border-t border-white/5">
-                              {item.notes.map((note, noteIdx) => (
-                                <li key={noteIdx} className="flex items-start gap-2">
-                                  <div className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: item.isAvailable ? '#818CF8' : 'rgba(255,255,255,0.3)' }} />
-                                  <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: '12px', lineHeight: 1.5, flex: 1, minWidth: 0 }}>
-                                    <ExpandableText text={note} lines={2} />
-                                  </div>
-                                </li>
-                              ))}
-                            </ul>
+                          {(item.title || item.body || (item.notes && item.notes.length > 0)) && (
+                            <div className="pt-2 border-t border-white/5">
+                              <RichSteamNote title={item.title} body={item.body} notes={item.notes} badgeVersion={item.version} />
+                            </div>
                           )}
                         </div>
                       );
@@ -1835,7 +1684,7 @@ function compareVersions(vA: string, vB: string): number {
                 </div>
 
                 {/* Metadata grid */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
                   {[
                     { icon: Calendar, label: 'Lanzamiento', value: new Date(game.releaseDate).toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' }) },
                     { icon: HardDrive, label: 'Tamaño', value: game.size },
@@ -1917,35 +1766,30 @@ function compareVersions(vA: string, vB: string): number {
                 {/* Changelog / Notas de Parche */}
                 {game.changelog && game.changelog.length > 0 && (
                   <div
-                    className="p-4 rounded-2xl"
+                    className="p-5 rounded-2xl space-y-4"
                     style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
                   >
-                    <div className="flex items-center gap-2 mb-3">
-                      <Star size={14} style={{ color: '#818CF8' }} />
-                      <h3 style={{ color: '#E2E8F0', fontSize: '13px', fontWeight: 600 }}>Notas de Parche</h3>
+                    <div className="flex items-center gap-2">
+                      <Star size={15} style={{ color: '#818CF8' }} />
+                      <h3 style={{ color: '#E2E8F0', fontSize: '14px', fontWeight: 700 }}>Notas de Parche y Anuncios</h3>
                     </div>
-                    <div className="space-y-4">
-                      {game.changelog.map((entry) => (
-                        <div key={entry.version}>
-                          <div className="flex items-center gap-2 mb-2">
+                    <div className="space-y-3.5">
+                      {game.changelog.map((entry, idx) => (
+                        <div
+                          key={idx}
+                          className="p-4 rounded-xl space-y-2.5 transition-all"
+                          style={{ backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}
+                        >
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
                             <span
-                              className="px-2 py-0.5 rounded-md"
-                              style={{ background: 'rgba(99,102,241,0.2)', color: '#A5B4FC', fontSize: '11px', fontWeight: 700 }}
+                              className="px-2.5 py-0.5 rounded-md font-bold text-xs"
+                              style={{ background: 'rgba(99,102,241,0.2)', color: '#A5B4FC' }}
                             >
-                              {entry.version}
+                              {formatVersionDisplay(entry.version)}
                             </span>
-                            <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: '11px' }}>{entry.date}</span>
+                            {entry.date && <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '11px' }}>{entry.date}</span>}
                           </div>
-                          <ul className="space-y-1.5 pl-3">
-                            {entry.notes.map((note, i) => (
-                              <li key={i} className="flex items-start gap-2">
-                                <div className="w-1 h-1 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: '#6366F1' }} />
-                                <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: '12px', flex: 1, minWidth: 0 }}>
-                                  <ExpandableText text={note} lines={2} />
-                                </div>
-                              </li>
-                            ))}
-                          </ul>
+                          <RichSteamNote notes={entry.notes} badgeVersion={entry.version} />
                         </div>
                       ))}
                     </div>
@@ -1953,19 +1797,6 @@ function compareVersions(vA: string, vB: string): number {
                 )}
               </>
             )}
-          </div>
-
-          {/* Right panel - actions */}
-          <div className="w-72 shrink-0 space-y-4">
-            {/* Action panel (Unified) */}
-            <div
-              className="p-4 rounded-2xl"
-              style={{ backgroundColor: '#151922', border: '1px solid rgba(255,255,255,0.07)' }}
-            >
-              {renderActionPanel()}
-            </div>
-          </div>
-        </div>
       </div>
 
       {/* Cloud Saves Modal (Oracle Cloud VPS) */}

@@ -128,11 +128,59 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
       // Proceso de versiones y changelog
       const versions = Array.isArray(row.game_versions) ? row.game_versions : [];
       
-      // Ordenar versiones de más nueva a más vieja por fecha
+      // Helper para extraer versión semántica limpia
+      const extractSemVer = (raw?: string): string => {
+        if (!raw) return '';
+        const trimmed = raw.trim();
+        const pureSemVer = trimmed.match(/^v?\.?\s*(\d+(\.\d+)+([a-z]|\-rc\d+|\-beta\d+|\-hotfix\d*|\.hotfix\d*)?)$/i);
+        if (pureSemVer) return `v${pureSemVer[1].replace(/^v\.?/i, '')}`;
+        const matchVer = trimmed.match(/\b(?:version|ver|v)\.?\s*#?\s*(\d+(\.\d+)+([a-z]|\-rc\d+|\-beta\d+|\-hotfix\d*|\.hotfix\d*)?)\b/i);
+        if (matchVer && matchVer[1]) return `v${matchVer[1]}`;
+        const matchNumbers = trimmed.match(/\b(\d+\.\d+(\.\d+)*)\b/);
+        if (matchNumbers && matchNumbers[1] && !/^\d{4}$/.test(matchNumbers[1])) return `v${matchNumbers[1]}`;
+        const matchBuild = trimmed.match(/\b(build\s*#?\s*\d+)\b/i);
+        if (matchBuild && matchBuild[1]) return matchBuild[1];
+        return trimmed;
+      };
+
+      const compareSemanticVersions = (vA: string, vB: string): number => {
+        if (!vA && !vB) return 0;
+        if (!vA) return -1;
+        if (!vB) return 1;
+        const cleanA = extractSemVer(vA).replace(/^v\.?/i, '').trim();
+        const cleanB = extractSemVer(vB).replace(/^v\.?/i, '').trim();
+        const partsA = cleanA.split(/[\.\-\s]/).filter(Boolean);
+        const partsB = cleanB.split(/[\.\-\s]/).filter(Boolean);
+        const maxLen = Math.max(partsA.length, partsB.length);
+        for (let i = 0; i < maxLen; i++) {
+          const rawA = partsA[i];
+          const rawB = partsB[i];
+          if (rawA === undefined) return -1;
+          if (rawB === undefined) return 1;
+          const numA = parseInt(rawA, 10);
+          const numB = parseInt(rawB, 10);
+          const isNumA = !isNaN(numA) && /^\d+$/.test(rawA);
+          const isNumB = !isNaN(numB) && /^\d+$/.test(rawB);
+          if (isNumA && isNumB) {
+            if (numA !== numB) return numA - numB;
+          } else {
+            const cmp = rawA.localeCompare(rawB, undefined, { numeric: true, sensitivity: 'base' });
+            if (cmp !== 0) return cmp;
+          }
+        }
+        return 0;
+      };
+
+      // Ordenar versiones de más nueva a más vieja por fecha y versión
       versions.sort((a: any, b: any) => {
         const dateA = a.release_date ? new Date(a.release_date).getTime() : 0;
         const dateB = b.release_date ? new Date(b.release_date).getTime() : 0;
-        return dateB - dateA;
+        if (dateB !== dateA) {
+          return dateB - dateA;
+        }
+        const nameA = a.version_name || a.changelog_title || '';
+        const nameB = b.version_name || b.changelog_title || '';
+        return compareSemanticVersions(nameB, nameA);
       });
 
       const availableVersions: any[] = [];
@@ -151,8 +199,7 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
           }
         }
 
-        let cleanBody = v.changelog_body || '';
-        cleanBody = cleanBody.replace(/\[\/?(b|i|u|url|img)\]/gi, '').trim();
+        let cleanBody = (v.changelog_body || '').trim();
 
         const entryNotes: string[] = [];
         if (v.changelog_title && v.changelog_title.trim()) {
@@ -162,48 +209,31 @@ export async function fetchGamesFromSupabase(): Promise<Game[]> {
           entryNotes.push(cleanBody);
         }
 
-        // 1. SIEMPRE agregar a changelog (Notas de parche y comentarios de la comunidad para la pestaña 'Detalles')
-        changelog.push({
-          version: v.changelog_title || v.version_name || 'Actualización / Anuncio',
-          date: v.release_date ? new Date(v.release_date).toISOString().split('T')[0] : '',
-          notes: entryNotes.length > 0 ? entryNotes : [v.version_name || 'Actualización de Steam'],
-        });
-
-        // 2. Extracción de versión real para la pestaña 'Versiones' y selector
+        // Extracción de versión real para la pestaña 'Versiones' y selector
         const rawVer = (v.version_name || '').trim();
         const hasDl = Boolean(vUrl && vUrl.trim() !== '');
 
-        // Verificar si es un nombre basado en fecha (ej: 'Update 2026-07-15')
-        const isDatePlaceholder = /^update\s+\d{4}[-\/\.]\d{2}[-\/\.]\d{2}/i.test(rawVer) || /^\d{4}[-\/\.]\d{2}[-\/\.]\d{2}$/.test(rawVer);
-
         let realVersionName: string | null = null;
+        const extracted = extractSemVer(rawVer);
+        if (/^v?\d+(\.\d+)+/i.test(extracted) || /^build\s*#?\s*\d+/i.test(extracted)) {
+          realVersionName = extracted;
+        } else if (v.changelog_title) {
+          const extractedTitle = extractSemVer(v.changelog_title);
+          if (/^v?\d+(\.\d+)+/i.test(extractedTitle)) {
+            realVersionName = extractedTitle;
+          }
+        }
 
-        if (hasDl) {
-          // Si tiene enlace de descarga asignado por el admin, siempre se conserva
+        if (!realVersionName && hasDl) {
           realVersionName = rawVer;
-        } else if (!isDatePlaceholder) {
-          // Si no es fecha y tiene formato de versión semántica (v1.0.13, 1.0.13, Build 12345)
-          const semVer = rawVer.match(/^v?\.?\s*(\d+(\.\d+)+([a-z]|\-rc\d+|\-beta\d+|\-hotfix\d*|\.hotfix\d*)?)$/i);
-          if (semVer) {
-            realVersionName = `v${semVer[1].replace(/^v\.?/i, '')}`;
-          } else if (/^build\s*#?\s*\d+$/i.test(rawVer)) {
-            realVersionName = rawVer;
-          } else if (/^(patch|hotfix|version|ver)\s*#?\s*\d+(\.\d+)*$/i.test(rawVer)) {
-            realVersionName = rawVer;
-          }
         }
 
-        // Si era un placeholder de fecha pero el título o body contiene la versión real (ej: "Patch Notes - Version 1.0.10")
-        if (!realVersionName && isDatePlaceholder) {
-          const searchTxt = `${v.changelog_title || ''} ${cleanBody}`;
-          const found = searchTxt.match(/\b(v\.?\s*\d+(\.\d+)+|version\s*\d+(\.\d+)+|ver\.\s*\d+(\.\d+)+)/i);
-          if (found) {
-            const num = found[0].replace(/^(v|version|ver)\.?\s*/i, '').trim();
-            if (num && !/^\d{4}$/.test(num)) {
-              realVersionName = `v${num}`;
-            }
-          }
-        }
+        // 1. SIEMPRE agregar a changelog (Notas de parche y comentarios de la comunidad para la pestaña 'Detalles')
+        changelog.push({
+          version: realVersionName || v.changelog_title || v.version_name || 'Actualización',
+          date: v.release_date ? new Date(v.release_date).toISOString().split('T')[0] : '',
+          notes: entryNotes.length > 0 ? entryNotes : [v.version_name || 'Actualización de Steam'],
+        });
 
         // Parse mirrors from the new version_mirrors relational table
         const versionMirrors: VersionMirror[] = Array.isArray(v.version_mirrors)
